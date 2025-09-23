@@ -22,9 +22,19 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleInstance"
+            android:launchMode="singleInstancePerTask"
             android:alwaysRetainTaskState="true"
-            android:excludeFromRecents="false">
+            android:excludeFromRecents="false"
+            android:finishOnTaskLaunch="false"
+            android:clearTaskOnLaunch="false"
+            android:stateNotNeeded="false"
+            android:noHistory="false"
+            android:allowTaskReparenting="false"
+            android:taskAffinity="com.frostr.igloo.PERSIST"
+            android:process=":persist"
+            android:documentLaunchMode="intoExisting"
+            android:relinquishTaskIdentity="false"
+            android:lockTaskMode="if_whitelisted">
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -55,5 +65,14 @@
                 <data android:scheme="web+nostrsigner" />
             </intent-filter>
         </activity>
+
+        <!-- NIP-55 Content Provider for background signing -->
+        <provider
+            android:name=".NIP55ContentProvider"
+            android:authorities="com.frostr.igloo.nip55"
+            android:enabled="true"
+            android:exported="true"
+            android:grantUriPermissions="false">
+        </provider>
     </application>
 </manifest>

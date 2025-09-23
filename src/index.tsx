@@ -15,7 +15,6 @@ import './styles/sessions.css'
 import './styles/settings.css'
 import './styles/scanner.css'
 import './styles/prompt.css'
-import './styles/banner.css'
 
 // PWA Install debugging and engagement tracking
 let deferredPrompt: any

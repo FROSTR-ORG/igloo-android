@@ -8,7 +8,7 @@ import type {
   SharePackage
 } from '@frostr/bifrost'
 
-export type NodeStatus       = 'init'   | 'disabled' | 'locked' | 'online' | 'offline'
+export type NodeStatus       = 'init' | 'disabled' | 'locked' | 'unlocking' | 'connecting' | 'peer-discovery' | 'signing-ready' | 'online' | 'offline'
 export type LogType          = 'info'   | 'debug'    | 'error'  | 'warn'
 export type PermissionType   = 'action' | 'event'
 export type NIP55RequestType = 'get_public_key' | 'sign_event' | 'nip04_encrypt' | 'nip04_decrypt' | 'nip44_encrypt' | 'nip44_decrypt' | 'decrypt_zap_event'
@@ -164,9 +164,18 @@ export interface AndroidSessionPersistence {
   clearPassword(): boolean
 }
 
+export interface AndroidContentResolver {
+  checkAutoApproval(requestJson: string): string | null
+  processRequestViaCall(requestJson: string): string | null
+  isContentProviderAvailable(): boolean
+  getDebugInfo(): string
+  log(message: string): void
+}
+
 declare global {
   interface Window {
     AndroidSecureStorage?: AndroidSecureStorage
     androidSessionPersistence?: AndroidSessionPersistence
+    AndroidContentResolver?: AndroidContentResolver
   }
 }

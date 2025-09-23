@@ -30,6 +30,22 @@ public class MainActivity extends Activity {
         Log.d(TAG, "Process ID: " + android.os.Process.myPid());
         Log.d(TAG, "savedInstanceState: " + (savedInstanceState != null ? "exists" : "null"));
 
+        // Detect and log forced activity recreation
+        Intent intent = getIntent();
+        if (intent != null) {
+            int flags = intent.getFlags();
+            Log.d(TAG, "Intent flags: " + Integer.toHexString(flags));
+            if ((flags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+                Log.w(TAG, "⚠️ DETECTED: Intent has FLAG_ACTIVITY_CLEAR_TOP - Amethyst is forcing activity recreation!");
+            }
+            if ((flags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+                Log.w(TAG, "⚠️ DETECTED: Intent has FLAG_ACTIVITY_NEW_TASK - may cause activity recreation");
+            }
+            if ((flags & Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0) {
+                Log.w(TAG, "⚠️ DETECTED: Intent has FLAG_ACTIVITY_CLEAR_TASK - will definitely destroy activity!");
+            }
+        }
+
         // Start local web server only in production mode
         if (!DEVELOPMENT_MODE) {
             webServer = new LocalWebServer(this);
@@ -79,6 +95,10 @@ public class MainActivity extends Activity {
         // Add NIP-55 bridge for result handling
         nip55Bridge = new NIP55Bridge(this);
         webView.addJavascriptInterface(nip55Bridge, "AndroidNIP55");
+
+        // Add ContentResolver bridge for background NIP-55 operations
+        ContentResolverBridge contentBridge = new ContentResolverBridge(this);
+        webView.addJavascriptInterface(contentBridge, "AndroidContentResolver");
 
         // Set WebView client
         webView.setWebViewClient(new WebViewClient() {
@@ -217,6 +237,19 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         Log.d(TAG, "=== ACTIVITY LIFECYCLE: onNewIntent ===");
         Log.d(TAG, "New intent received: " + intent.getAction() + ", data: " + intent.getData());
+
+        // Check for destructive intent flags
+        int flags = intent.getFlags();
+        Log.d(TAG, "onNewIntent flags: " + Integer.toHexString(flags));
+        if ((flags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+            Log.w(TAG, "🛡️ BLOCKING: Intent has FLAG_ACTIVITY_CLEAR_TOP - removing destructive flag");
+            intent.setFlags(flags & ~Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        }
+        if ((flags & Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0) {
+            Log.w(TAG, "🛡️ BLOCKING: Intent has FLAG_ACTIVITY_CLEAR_TASK - removing destructive flag");
+            intent.setFlags(flags & ~Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        }
+
         setIntent(intent);  // Important: Update the current intent
         handleIntent(intent);
     }
@@ -501,10 +534,35 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
         Log.d(TAG, "=== ACTIVITY LIFECYCLE: onDestroy ===");
+        Log.w(TAG, "🚨 ACTIVITY BEING DESTROYED - This should NOT happen with singleInstance mode!");
+
+        // Log the reason for destruction
+        if (isFinishing()) {
+            Log.w(TAG, "Activity is finishing() - user or system called finish()");
+        } else {
+            Log.w(TAG, "Activity destroyed without finishing() - likely system kill or configuration change");
+        }
+
+        super.onDestroy();
         if (webServer != null) {
             webServer.stop();
         }
+    }
+
+    @Override
+    public void finish() {
+        Log.d(TAG, "finish() called - examining stack trace to identify caller");
+        Log.d(TAG, "Stack trace: " + android.util.Log.getStackTraceString(new Exception()));
+        // Call super.finish() to allow normal finishing, but log it
+        super.finish();
+    }
+
+    @Override
+    public void finishAndRemoveTask() {
+        Log.w(TAG, "🚨 finishAndRemoveTask() called - this will definitely destroy the task!");
+        Log.d(TAG, "Stack trace: " + android.util.Log.getStackTraceString(new Exception()));
+        // Call super to allow it, but log it prominently
+        super.finishAndRemoveTask();
     }
 }

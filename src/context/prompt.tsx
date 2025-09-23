@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react'
 import { useSettings } from '@/context/settings.js'
 import { useBifrostNode } from '@/context/node.js'
 import { BifrostSignDevice } from '@/class/signer.js'
+import { findExistingPermission, addPermissionRecord } from '@/lib/permissions.js'
 
 import type { ReactElement } from 'react'
 
@@ -35,18 +36,19 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
     console.log('showPrompt called with request:', request)
     console.log('Node status:', node.status)
 
-    // If node is initializing, wait briefly for auto-unlock to complete
+    // If node is initializing, wait for auto-unlock to complete
     if (node.status === 'init') {
       console.log('Node is initializing, waiting for auto-unlock...')
-      // Wait up to 2 seconds for node to stabilize
-      let attempts = 0
-      const maxAttempts = 20 // 20 * 100ms = 2 seconds
+      const timeout = 2000 // 2 seconds max wait time
+      const startTime = Date.now()
 
-      while (node.status === 'init' && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-        attempts++
+      // More efficient wait using exponential backoff
+      while (node.status === 'init' && (Date.now() - startTime) < timeout) {
+        const waitTime = Math.min(50, timeout - (Date.now() - startTime))
+        if (waitTime <= 0) break
+        await new Promise(resolve => setTimeout(resolve, waitTime))
       }
-      console.log(`After waiting, node status is: ${node.status}`)
+      console.log(`After waiting ${Date.now() - startTime}ms, node status is: ${node.status}`)
     }
 
     // If user is not online/unlocked, store as pending request instead of showing prompt
@@ -60,12 +62,22 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
     }
 
     // Check if we have an existing permission for this request
-    const existingPermission = getExistingPermission(request)
+    const existingPermission = findExistingPermission(request, settings.data.perms)
     if (existingPermission) {
       console.log('Found existing permission:', existingPermission)
       if (existingPermission.accept) {
         console.log('Auto-approving based on existing permission')
-        // Execute the request automatically
+
+        // Try ContentResolver first for background signing (dual-mode routing)
+        const contentResult = await tryContentResolverApproval(request)
+        if (contentResult.success) {
+          console.log('Successfully processed via ContentResolver')
+          await sendResult(request, contentResult.result, true)
+          return
+        }
+
+        console.log('ContentResolver failed or unavailable, falling back to traditional method')
+        // Fall back to traditional in-app execution
         try {
           const result = await executeOperation(request)
           await sendResult(request, result, true)
@@ -98,86 +110,59 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
     })
   }
 
-  // Check if permission already exists for this request
-  const getExistingPermission = (request: NIP55Request) => {
-    const permissions = settings.data.perms
-    for (const policy of permissions) {
-      if (request.type === 'sign_event') {
-        const eventRecord = policy.event.find((e: PermEventRecord) =>
-          e.host === request.host && e.kind === request.event?.kind
-        )
-        if (eventRecord) return eventRecord
-      } else {
-        const actionRecord = policy.action.find((a: PermActionRecord) =>
-          a.host === request.host && a.action === request.type
-        )
-        if (actionRecord) return actionRecord
-      }
+
+  // Try to get approval via ContentResolver for background operations
+  const tryContentResolverApproval = async (request: NIP55Request): Promise<{ success: boolean; result?: any; error?: string }> => {
+    console.log('Attempting ContentResolver approval for request:', request.type)
+
+    // Check if ContentResolver bridge is available
+    const contentResolver = (window as any).AndroidContentResolver
+    if (!contentResolver) {
+      console.log('AndroidContentResolver bridge not available')
+      return { success: false, error: 'ContentResolver bridge not available' }
     }
-    return null
+
+    // Check if ContentProvider is available
+    try {
+      const isAvailable = contentResolver.isContentProviderAvailable()
+      if (!isAvailable) {
+        console.log('ContentProvider is not available')
+        return { success: false, error: 'ContentProvider not available' }
+      }
+    } catch (error) {
+      console.error('Error checking ContentProvider availability:', error)
+      return { success: false, error: 'Error checking ContentProvider availability' }
+    }
+
+    // Try to process the request via ContentResolver
+    try {
+      const requestJson = JSON.stringify(request)
+      console.log('Sending request to ContentResolver:', requestJson)
+
+      const responseJson = contentResolver.processRequestViaCall(requestJson)
+      if (!responseJson) {
+        console.log('No response from ContentResolver')
+        return { success: false, error: 'No response from ContentResolver' }
+      }
+
+      const response = JSON.parse(responseJson)
+      console.log('ContentResolver response:', response)
+
+      if (response.success && response.result) {
+        return { success: true, result: response.result }
+      } else {
+        return { success: false, error: response.error || 'ContentResolver returned failure' }
+      }
+    } catch (error) {
+      console.error('Error processing request via ContentResolver:', error)
+      return { success: false, error: 'Error processing request via ContentResolver' }
+    }
   }
 
   // Add permission to settings
   const addPermission = (request: NIP55Request, accept: boolean) => {
-    const timestamp = Math.floor(Date.now() / 1000)
-    const permissions = [...settings.data.perms]
-
-    // Find existing policy for this host or create new one
-    let policy = permissions.find(p =>
-      p.action.some(a => a.host === request.host) ||
-      p.event.some(e => e.host === request.host)
-    )
-
-    if (!policy) {
-      policy = { action: [], event: [] }
-      permissions.push(policy)
-    }
-
-    if (request.type === 'sign_event') {
-      // Check if permission already exists for this host/kind combination
-      const existingIndex = policy.event.findIndex(e =>
-        e.host === request.host && e.kind === (request.event?.kind || 0)
-      )
-
-      const eventRecord: PermEventRecord = {
-        host: request.host,
-        type: 'event',
-        kind: request.event?.kind || 0,
-        accept,
-        created_at: timestamp
-      }
-
-      if (existingIndex >= 0) {
-        // Update existing permission
-        policy.event[existingIndex] = eventRecord
-      } else {
-        // Add new permission
-        policy.event.push(eventRecord)
-      }
-    } else {
-      // Check if permission already exists for this host/action combination
-      const existingIndex = policy.action.findIndex(a =>
-        a.host === request.host && a.action === request.type
-      )
-
-      const actionRecord: PermActionRecord = {
-        host: request.host,
-        type: 'action',
-        action: request.type,
-        accept,
-        created_at: timestamp
-      }
-
-      if (existingIndex >= 0) {
-        // Update existing permission
-        policy.action[existingIndex] = actionRecord
-      } else {
-        // Add new permission
-        policy.action.push(actionRecord)
-      }
-    }
-
-    settings.update({ perms: permissions })
+    const updatedPermissions = addPermissionRecord(request, accept, settings.data.perms)
+    settings.update({ perms: updatedPermissions })
   }
 
   // Execute the signer operation
