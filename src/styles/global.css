@@ -90,12 +90,19 @@ pre.code-display {
 .input-group-vertical { display: flex; flex-direction: column; margin-bottom: 15px; }
 .input-group-vertical input { margin-bottom: 8px; }
 
-.input-with-button { display: flex; width: 100%; box-sizing: border-box; }
+.input-with-button { display: flex; width: 100%; box-sizing: border-box; flex-direction: column; gap: 12px; }
 .input-with-button > * { margin: 0; box-sizing: border-box; }
-.input-with-button input { flex: 1; height: 36px; border-radius: 4px 0 0 4px; padding: 8px 12px; border: 1px solid rgba(255, 255, 255, 0.1); border-right: none; }
-.input-with-button .input-actions { display: flex; gap: 8px; }
-.input-with-button .button { height: 36px; padding: 0 15px; }
-.input-with-button .input-actions .button:first-child { border-radius: 0 4px 4px 0; border-left: none; }
+.input-with-button input { flex: 1; height: 44px; border-radius: 4px; padding: 8px 12px; border: 1px solid rgba(255, 255, 255, 0.1); font-size: 16px; }
+.input-with-button .input-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.input-with-button .button { height: 44px; padding: 0 20px; min-width: 80px; flex: 1; font-size: 14px; }
+
+/* Desktop styles for input-with-button */
+@media (min-width: 768px) {
+  .input-with-button { flex-direction: row; gap: 0; }
+  .input-with-button input { border-radius: 4px 0 0 4px; border-right: none; height: 36px; font-size: 14px; }
+  .input-with-button .button { height: 36px; padding: 0 15px; flex: none; }
+  .input-with-button .input-actions .button:first-child { border-radius: 0 4px 4px 0; border-left: none; }
+}
 
 .action-buttons { display: flex; gap: 10px; margin-top: 15px; }
 

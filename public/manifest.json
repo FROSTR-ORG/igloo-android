@@ -1,17 +1,47 @@
 {
-  "name": "igloo-pwa",
-  "short_name": "Igloo PWA Signer",
+  "name": "Igloo PWA Signer",
+  "short_name": "Igloo",
   "description": "NIP-46 signing device for your FROSTR keys.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1a1a1a",
-  "theme_color": "#1a1a1a",
+  "orientation": "portrait",
+  "background_color": "#132242",
+  "theme_color": "#132242",
+  "scope": "/",
+  "id": "igloo-pwa-signer",
+  "categories": ["productivity", "security"],
+  "lang": "en",
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "./icons/logo.png",
-      "sizes": "any",
+      "src": "/icons/logo.png",
+      "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/icons/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+nostrsigner",
+      "url": "/?nip55=%s"
     }
   ]
 }

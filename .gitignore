@@ -2,6 +2,25 @@ node_modules
 dist
 
 .env
-
+.local
 NOTES.md
 TODO.md
+
+# Android development
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+local.properties
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.jks
+*.keystore
+.idea/
+*.iml
+.DS_Store
+android/app/src/main/assets/www

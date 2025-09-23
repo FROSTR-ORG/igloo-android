@@ -1,4 +1,4 @@
-import { useSettings } from '@/hooks/useSettings.js'
+import { useSettings } from '@/context/settings.js'
 
 export function ResetStoreField() {
   const store = useSettings()

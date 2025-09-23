@@ -1,7 +1,7 @@
-import { useState }      from 'react'
-import { DashboardView } from '@/components/dash/index.js'
-import { SessionsView }  from '@/components/sessions/index.js'
-import { SettingsView }  from '@/components/settings/index.js'
+import { useState }        from 'react'
+import { DashboardView   } from '@/components/dash/index.js'
+import { PermissionsView } from '@/components/permissions/index.js'
+import { SettingsView }    from '@/components/settings/index.js'
 
 import type { ReactElement } from 'react'
 
@@ -24,11 +24,11 @@ export function Tabs(): ReactElement {
           </button>
 
           <button 
-            className={`tab-button ${activeTab === 'sessions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('sessions')}
+            className={`tab-button ${activeTab === 'permissions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('permissions')}
           >
-            <Icons.SessionsIcon />
-            <span>Sessions</span>
+            <Icons.PermissionsIcon />
+            <span>Permissions</span>
           </button>
 
           <button
@@ -48,9 +48,9 @@ export function Tabs(): ReactElement {
           </div>
         )}
 
-        {activeTab === 'sessions' && (
+        {activeTab === 'permissions' && (
           <div className="tab-panel">
-            <SessionsView />
+            <PermissionsView />
           </div>
         )}
 

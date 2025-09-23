@@ -1,55 +1,80 @@
-import { useState }       from 'react'
+import { useEffect, useState }       from 'react'
 import { nip19 }          from 'nostr-tools'
-import { useBifrostNode } from '@/hooks/useNode.js'
+import { useBifrostNode } from '@/context/node.js'
+import { useSettings }    from '@/context/settings.js'
 
 export function NodeInfoView () {
-  const client = useBifrostNode()
-  const pubkey = client.data.pubkey
-  const status = client.data.status
+  const node     = useBifrostNode()
+  const settings = useSettings()
+  const pubkey   = settings.data.pubkey
 
   const [ password, setPassword ]       = useState('')
   const [ error, setError ]             = useState<string | null>(null)
   const [ showHex, setShowHex ]         = useState(false)
   const [ copySuccess, setCopySuccess ] = useState(false)
 
-  const handleCopy = async () => {
+  const copy_pubkey = async () => {
+    // Return early if the pubkey is not set.
+    if (!pubkey) return
+    // Get the npub value.
     const valueToCopy = get_npub(pubkey, showHex)
+    // Try to copy the value.
     try {
+      // Copy the value to the clipboard.
       await navigator.clipboard.writeText(valueToCopy)
+      // Set the copy success state.
       setCopySuccess(true)
+      // Reset the copy success state after 1 second.
       setTimeout(() => setCopySuccess(false), 1000)
     } catch (err) {
+      // Log the error.
       console.error('Failed to copy:', err)
     }
   }
 
-  const handleUnlock = async (e: React.FormEvent) => {
+  const unlock_node = async (e: React.FormEvent) => {
+    // Prevent the default form submission.
     e.preventDefault()
+    // Return early if the password is not set.
     if (!password) {
+      // Set the error state and return.
       setError('Password is required')
       return
     }
-    const res = await client.unlock(password)
-    if (!res.ok) {
-      setError(res.error)
-      return
-    } else {
-      setError(null)
-      setPassword('')
+    // Unlock the client.
+    node.unlock(password)
+    // Save password to Android secure storage if available
+    if (typeof window !== 'undefined' && window.androidSessionPersistence) {
+      window.androidSessionPersistence.savePassword(password)
     }
+    // Reset the password state.
+    setPassword('')
   }
 
-  // useEffect(() => {
-  //   (async () => {
-  //     // Wait for 500ms.
-  //     await sleep(500)
-  //     // Fetch data from the store.
-  //     bus.request({ topic: fetch_key })
-  //   })()
-  // }, [ bus ])
+  useEffect(() => {
+    if (node.status === 'locked') {
+      // First check sessionStorage
+      const password = sessionStorage.getItem('igloo_session_password')
+      if (password) {
+        node.unlock(password)
+      } else if (typeof window !== 'undefined' && window.AndroidSecureStorage) {
+        // If sessionStorage is empty, check Android secure storage
+        try {
+          const storedPassword = window.AndroidSecureStorage.getSecret('igloo_session_password')
+          if (storedPassword && storedPassword !== '') {
+            // Store in sessionStorage for future use and unlock
+            sessionStorage.setItem('igloo_session_password', storedPassword)
+            node.unlock(storedPassword)
+          }
+        } catch (e) {
+          console.error('Failed to restore password from Android secure storage:', e)
+        }
+      }
+    }
+  }, [ node.status ])
 
   // If client is locked, show locked state
-  if (status === 'locked') {
+  if (node.status === 'locked') {
     return (
       <div className="dashboard-container">
         <h2 className="section-header">Node Info</h2>
@@ -57,7 +82,7 @@ export function NodeInfoView () {
           <span className="node-label">Status</span>
           <span className="status-pill locked">Locked</span>
         </div>
-        <form onSubmit={handleUnlock} className="unlock-form">
+        <form onSubmit={unlock_node} className="unlock-form">
           <input
             type="password"
             value={password}
@@ -85,12 +110,12 @@ export function NodeInfoView () {
       <h2 className="section-header">Node Info</h2>
       <div className="node-inline-row locked">
         <span className="node-label">Status</span>
-        <span className={`status-pill ${status}`}>{status}</span>
+        <span className={`status-pill ${node.status}`}>{node.status}</span>
       </div>
       <div className="node-inline-row">
         <span className="node-label">Pubkey</span>
-        { pubkey === null && <pre>no pubkey set</pre>}
-        {pubkey !== null &&
+        {!pubkey && <pre>no pubkey set</pre>}
+        {pubkey &&
           <div className="pubkey-container">
             <span 
               className="node-npub" 
@@ -100,7 +125,7 @@ export function NodeInfoView () {
               { truncate(get_npub(pubkey, showHex))}
             </span>
             <button
-              onClick={handleCopy}
+              onClick={copy_pubkey}
               className={`button button-small copy-button ${copySuccess ? 'copied' : ''}`}
               title="Copy to clipboard"
             >
@@ -111,7 +136,7 @@ export function NodeInfoView () {
       </div>
       <button 
         className="button"
-        onClick={() => client.reset()}
+        onClick={() => node.reset()}
       >
         Reset Node
       </button>

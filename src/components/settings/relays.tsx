@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useSettings }         from '@/hooks/useSettings.js'
+import { useSettings }         from '@/context/settings.js'
 
-import type { RelayPolicy } from '@/types/index.js'
+import type { RelayPolicy } from '@/types.js'
 
 export function RelayConfigField() {
   const store = useSettings()

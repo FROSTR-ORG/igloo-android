@@ -3,6 +3,7 @@ import { schnorr }                    from '@noble/curves/secp256k1'
 import { sha256 }                     from '@noble/hashes/sha2'
 import { EventEmitter }               from 'node:events'
 import { WebSocket, WebSocketServer } from 'ws'
+import { Buff } from '@vbyte/buff'
 
 /* ================ [ Configuration ] ================ */
 
@@ -369,7 +370,7 @@ function match_tags (
 
 function verify_event (event : SignedEvent) {
   const { content, created_at, id, kind, pubkey, sig, tags } = event
-  const preimg = JSON.stringify([ 0, pubkey, created_at, kind, tags, content ])
+  const preimg = Buff.json([ 0, pubkey, created_at, kind, tags, content ])
   const digest = Buffer.from(sha256(preimg)).toString('hex')
   if (digest !== id) return false
   return schnorr.verify(sig, id, pubkey)

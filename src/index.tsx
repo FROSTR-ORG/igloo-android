@@ -1,9 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App }        from '@/components/app.js'
-import * as CONST     from '@/const.js'
 
-import { create_request_message } from '@/lib/message.js'
+import { ConsoleProvider }  from '@/context/console.js'
+import { NodeProvider }     from '@/context/node.js'
+import { SettingsProvider } from '@/context/settings.js'
+import { PromptProvider }   from '@/context/prompt.js'
 
 import './styles/global.css'
 import './styles/layout.css'
@@ -12,6 +14,54 @@ import './styles/console.css'
 import './styles/sessions.css'
 import './styles/settings.css'
 import './styles/scanner.css'
+import './styles/prompt.css'
+import './styles/banner.css'
+
+// PWA Install debugging and engagement tracking
+let deferredPrompt: any
+let userHasInteracted = false
+let pageViewStartTime = Date.now()
+
+// Track user engagement for install criteria
+window.addEventListener('click', () => {
+  if (!userHasInteracted) {
+    userHasInteracted = true
+    console.log('PWA: User has interacted with the page')
+  }
+}, { once: true })
+
+window.addEventListener('touchstart', () => {
+  if (!userHasInteracted) {
+    userHasInteracted = true
+    console.log('PWA: User has interacted with the page (touch)')
+  }
+}, { once: true })
+
+// Track 30 second view time requirement
+setTimeout(() => {
+  const viewTime = Date.now() - pageViewStartTime
+  console.log(`PWA: User has viewed page for ${Math.round(viewTime / 1000)} seconds`)
+  if (viewTime >= 30000) {
+    console.log('PWA: 30+ second engagement requirement met')
+  }
+}, 30000)
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  console.log('PWA: beforeinstallprompt event fired')
+  e.preventDefault()
+  deferredPrompt = e
+  console.log('PWA: Install prompt is available')
+})
+
+window.addEventListener('appinstalled', () => {
+  console.log('PWA: App was installed')
+  deferredPrompt = null
+})
+
+// Check if app is already installed
+if (window.matchMedia('(display-mode: standalone)').matches) {
+  console.log('PWA: App is running in standalone mode')
+}
 
 // Register service worker
 if ('serviceWorker' in navigator) {
@@ -23,27 +73,10 @@ if ('serviceWorker' in navigator) {
       const worker  = await navigator.serviceWorker.register('/sw.js', options)
       // If the worker is not active, throw an error.
       if (!worker.active) throw new Error('[ app ] worker returned null')
-      // Create the initialization message.
-      const msg = create_request_message({ topic: 'init' })
-      // Send initialization message to service worker.
-      worker.active.postMessage(msg)
-      // Also handle service worker updates
-      worker.addEventListener('updatefound', () => {
-        // Get the updated worker.
-        const updated = worker.installing
-        // If the updated worker is not found, throw an error.
-        if (!updated) throw new Error('[ app ] worker returned null')
-        // Listen for state changes.
-        updated.addEventListener('statechange', () => {
-          // If the updated worker is activated,
-          if (updated.state === 'activated') {
-            // Send initialization message.
-            updated.postMessage(msg)
-          }
-        })
-      })
+      // Log the worker registered with scope.
       console.log('[ app ] worker registered with scope:', worker.scope)
     } catch (error) {
+      // Log the worker registration failed.
       console.error('[ app ] worker registration failed:', error)
     }
   })
@@ -61,6 +94,14 @@ const root = createRoot(container)
 // Render the app.
 root.render(
   <StrictMode>
-    <App />
+    <SettingsProvider>
+      <ConsoleProvider>
+        <NodeProvider>
+          <PromptProvider>
+            <App />
+          </PromptProvider>
+        </NodeProvider>
+      </ConsoleProvider>
+    </SettingsProvider>
   </StrictMode>
 )

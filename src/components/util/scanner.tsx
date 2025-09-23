@@ -18,23 +18,54 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
     let scanner: QrScanner | null = null
 
     const initializeScanner = async () => {
+      console.log('QR Scanner: Initializing scanner...')
       if (!videoRef.current) {
+        console.error('QR Scanner: Video element not found')
         setError('Video element not found')
         return
       }
 
+      console.log('QR Scanner: Video element found, creating scanner...')
       try {
         scanner = new QrScanner(
           videoRef.current,
           (result : QrScanner.ScanResult) => {
-            onResult(result.data)
+            console.log('QR Scanner: ===== QR CODE DETECTED =====')
+            console.log('QR Scanner: Full result object:', result)
+            console.log('QR Scanner: Data:', result.data)
+            console.log('QR Scanner: Corner points:', result.cornerPoints)
+
+            // Additional validation
+            if (!result.data) {
+              console.warn('QR Scanner: Warning - result.data is empty or null')
+              return
+            }
+
+            console.log('QR Scanner: Calling onResult with data:', JSON.stringify(result.data))
+
+            try {
+              onResult(result.data)
+              console.log('QR Scanner: onResult called successfully')
+            } catch (err) {
+              console.error('QR Scanner: Error in onResult callback:', err)
+            }
+
+            console.log('QR Scanner: Stopping scanner after scan')
             scanner?.stop()
           },
-          { returnDetailedScanResult: true }
+          {
+            returnDetailedScanResult: true,
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
+            maxScansPerSecond: 5,
+            preferredCamera: 'environment'
+          }
         )
 
         // Start scanning
+        console.log('QR Scanner: Starting scanner...')
         await scanner.start()
+        console.log('QR Scanner: Scanner started successfully')
         setError(null)
         setPerm(true)
         scannerRef.current = scanner
@@ -61,12 +92,19 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
 
   return (
     <div className="scanner-container">
-      <video 
-        ref={videoRef} 
-        className="scanner-video" 
-        playsInline 
-        autoPlay 
+      <video
+        ref={videoRef}
+        className="scanner-video"
+        playsInline
+        autoPlay
         muted
+        onLoadedMetadata={() => {
+          console.log('QR Scanner: Video metadata loaded')
+          console.log('QR Scanner: Video dimensions:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight)
+        }}
+        onPlay={() => {
+          console.log('QR Scanner: Video is playing')
+        }}
       />
       {error && (
         <div className="scanner-error">

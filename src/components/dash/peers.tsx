@@ -1,19 +1,19 @@
 import { RefreshIcon }    from '@/components/util/icons.js'
-import { useBifrostNode } from '@/hooks/useNode.js'
+import { useBifrostNode } from '@/context/node.js'
 
 export function PeerInfoView () {
-  const node  = useBifrostNode()
+  const node = useBifrostNode()
 
   return (
     <div className="dashboard-container">
       <h2 className="section-header">Peer Info</h2>
-      {node.data.status === 'loading' && (
+      {node.status === 'init' && (
         <p>waiting for node to initialize...</p>
       )}
-      {node.data.status === 'locked' && (
+      {node.status === 'locked' && (
         <p>waiting for node to unlock...</p>
       )}
-      {node.data.peers.length > 0 && (
+      {node.status === 'online' && node.peers && (
         <table className="peers-table">
           <thead>
             <tr>
@@ -23,7 +23,7 @@ export function PeerInfoView () {
             </tr>
           </thead>
           <tbody>
-            {node.data.peers.map((peer) => (
+            {node.peers.map((peer) => (
               <tr key={peer.pubkey}>
                 <td className="pubkey-cell">{peer.pubkey}</td>
                 <td className="status-cell">
@@ -32,10 +32,10 @@ export function PeerInfoView () {
                   </span>
                 </td>
                 <td className="refresh-cell">
-                  <button 
+                  <button
                     className="button"
                     onClick={() => node.ping(peer.pubkey)}
-                    disabled={node.data.status !== 'online'}
+                    disabled={node.status !== 'online'}
                     title="Refresh peer status"
                   >
                     <RefreshIcon />

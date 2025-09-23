@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="update_app"
+        android:enabled="true"
+        android:icon="@android:drawable/stat_sys_download"
+        android:shortcutShortLabel="@string/shortcut_update_short"
+        android:shortcutLongLabel="@string/shortcut_update_long">
+        <intent
+            android:action="com.frostr.igloo.UPDATE_APP"
+            android:targetPackage="com.frostr.igloo"
+            android:targetClass="com.frostr.igloo.MainActivity" />
+    </shortcut>
+</shortcuts>

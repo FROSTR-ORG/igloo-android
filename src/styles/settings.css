@@ -178,8 +178,42 @@
 
 .flex-input {
   flex: 1;
+  min-height: 44px;
+  font-size: 16px;
 }
 
 .flex-btn {
   min-width: 90px;
+}
+
+/* Mobile-specific settings form improvements */
+@media (max-width: 767px) {
+  .input-with-button {
+    gap: 16px;
+  }
+
+  .input-with-button input,
+  .flex-input {
+    height: 48px;
+    font-size: 16px;
+    padding: 12px 16px;
+  }
+
+  .input-with-button .button {
+    height: 48px;
+    font-size: 16px;
+    font-weight: 500;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .input-actions {
+    gap: 12px;
+  }
+
+  /* Stack password input vertically on mobile */
+  .nsec-input {
+    margin-top: 12px;
+    width: 100%;
+  }
 } 

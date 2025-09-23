@@ -1,11 +1,11 @@
-import { get_event_id } from '@cmdcode/nostr-p2p/lib'
-import { BifrostNode }  from '@frostr/bifrost'
-import * as cipher      from '@/crypto/cipher.js'
-import { now }          from '@/util/helpers.js'
-
-import type { SignedEvent, SignerDeviceAPI } from '@cmdcode/nostr-connect'
-import type { EventTemplate }                from 'nostr-tools'
+import { get_event_id }   from '@cmdcode/nostr-p2p/lib'
+import { now }            from '@vbyte/micro-lib/util'
+import { BifrostNode }    from '@frostr/bifrost'
 import { convert_pubkey } from '@frostr/bifrost/util'
+import * as cipher        from '@/lib/cipher.js'
+
+import type { EventTemplate } from 'nostr-tools'
+import type { SignedEvent }   from '@cmdcode/nostr-p2p'
 
 const SIGN_METHODS : Record<string, string> = {
   sign_event    : 'sign_event',
@@ -15,7 +15,7 @@ const SIGN_METHODS : Record<string, string> = {
   nip44_decrypt : 'nip44_decrypt'
 }
 
-export class BifrostSignDevice implements SignerDeviceAPI {
+export class BifrostSignDevice {
   private _node : BifrostNode
 
   constructor (node : BifrostNode) {

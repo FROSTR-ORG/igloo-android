@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import { get_pubkey }          from '@frostr/bifrost/util'
 import { QRScanner }           from '@/components/util/scanner.js'
-import { useSettings }         from '@/hooks/useSettings.js'
+import { useSettings }         from '@/context/settings.js'
 import { decode_share }        from '@/lib/encoder.js'
 
-import { decrypt_secret, encrypt_secret } from '@/lib/crypto.js'
+import {
+  decrypt_content,
+  encrypt_content
+} from '@/lib/enclave.js'
 
 export function ShareConfigField() {
-  const store = useSettings()
-  const share = store.data.share
+  const settings = useSettings()
+  const share    = settings.data.share
 
   const [ input, setInput ] = useState<string>('')
   const [ error, setError ] = useState<string | null>(null)
@@ -19,7 +22,7 @@ export function ShareConfigField() {
   const [ isScanning, setIsScanning ] = useState<boolean>(false)
 
   const decrypt = () => {
-    const decrypted = decrypt_secret(input, password)
+    const decrypted = decrypt_content(input, password)
     if (!decrypted) {
       setError('failed to decrypt secret share')
       return
@@ -40,7 +43,7 @@ export function ShareConfigField() {
     // If the input is empty,
     if (input === '') {
       // Update the store and return.
-      store.update({ pubkey : null, share : null })
+      settings.update({ pubkey : null, share : null })
       return
     }
     // If the input has invalid characters,
@@ -64,9 +67,9 @@ export function ShareConfigField() {
       return
     }
     // Get the public key from the secret key.
-    const pubkey = get_pubkey(share.seckey, 'ecdsa')
+    const pubkey    = get_pubkey(share.seckey, 'bip340')
     // Update the credentials in the store.
-    const encrypted = encrypt_secret(input, password)
+    const encrypted = encrypt_content(input, password)
     // If encryption fails,
     if (!encrypted) {
       // Set an error and return.
@@ -74,18 +77,18 @@ export function ShareConfigField() {
       return
     }
     // Set the saved state, and reset it after a short delay.
-    store.update({ pubkey, share : encrypted })
+    settings.update({ pubkey, share : encrypted })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
 
   useEffect(() => {
-    if (store.data.share === null) {
+    if (settings.data.share === null) {
       setInput('')
     } else {
-      setInput(store.data.share)
+      setInput(settings.data.share)
     }
-  }, [ store.data.share ])
+  }, [ settings.data.share ])
 
   /**
    * Handle the validation of the input when it changes.
@@ -148,8 +151,10 @@ export function ShareConfigField() {
         {isScanning && (
           <QRScanner
             onResult={(result: string) => {
+              console.log('Share Component: QR result received:', result)
               setInput(result.trim())
               setIsScanning(false)
+              console.log('Share Component: Input set and scanning stopped')
             }}
             onError={(error: Error) => {
               console.error('QR scan error:', error)
@@ -181,11 +186,13 @@ function is_share_string(input : string) {
  * Get the share JSON from the input.
  */
 function get_share_json(input : string) {
+  if (!input.startsWith('bfshare')) return null
   try {
     const share = decode_share(input)
     if (share === null) return null
     return JSON.stringify(share, null, 2)
   } catch (err) {
+    console.error('get_share_json error', err)
     return null
   }
 }

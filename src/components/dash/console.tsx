@@ -1,10 +1,10 @@
 
-import { useState }  from 'react'
-import { TrashIcon } from '@/components/util/icons.js'
-import { useLogger } from '@/hooks/useLogger.js'
+import { useState }      from 'react'
+import { TrashIcon }     from '@/components/util/icons.js'
+import { useWebConsole } from '@/context/console.js'
 
 export function ConsoleView () {
-  const logger = useLogger()
+  const console = useWebConsole()
   
   const [ expandedIdx, setExpandedIdx ] = useState<Record<number, boolean>>({})
 
@@ -14,7 +14,7 @@ export function ConsoleView () {
 
   // Clear logs handler
   const clear_logs = async () => {
-    logger.clear()
+    console.clear()
     setExpandedIdx({})
   }
 
@@ -23,7 +23,7 @@ export function ConsoleView () {
 
       <div className="console-header-controls">
         <h2 className="section-header">
-          Event Log <span className="event-count">({logger.data.length} events)</span>
+          Event Log <span className="event-count">({console.logs.length} events)</span>
         </h2>
         <button className="button clear-button" onClick={clear_logs} title="Clear logs">
           <TrashIcon />
@@ -33,10 +33,10 @@ export function ConsoleView () {
       <p className="description">Monitor events from your node.</p>
       
       <div className="console-output">
-        {logger.data.length === 0 ? (
+        {console.logs.length === 0 ? (
           <div className="console-empty">No events logged yet</div>
         ) : (
-          logger.data.map((log, idx) => (
+          console.logs.map((log, idx) => (
             <div key={idx} className={`console-entry ${log.payload ? 'expandable' : ''}`}>
               <div className="entry-header" onClick={() => log.payload && toggle_expand(idx)}>
                 <div className="entry-prefix">

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useSettings }         from '@/hooks/useSettings.js'
+import { useSettings }         from '@/context/settings.js'
 
-import type { PeerConfig } from '@frostr/bifrost'
+import type { GroupPackage, PeerConfig } from '@frostr/bifrost'
+import { convert_pubkey } from '@frostr/bifrost/util'
 
 export function PeerConfigField() {
-  const store = useSettings()
+  const settings = useSettings()
 
   const [ peers, setPeers ]     = useState<PeerConfig[]>([])
   const [ changes, setChanges ] = useState<boolean>(false)
@@ -12,7 +13,7 @@ export function PeerConfigField() {
 
   // Update the peer policies in the store.
   const update = () => {
-    store.update({ peers })
+    settings.update({ peers })
     setChanges(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
@@ -20,7 +21,7 @@ export function PeerConfigField() {
 
   // Discard changes by resetting local state from store
   const cancel = () => {
-    setPeers(store.data.peers)
+    setPeers(settings.data.peers)
     setChanges(false)
   }
 
@@ -35,8 +36,26 @@ export function PeerConfigField() {
   }
 
   useEffect(() => {
-    setPeers(store.data.peers)
-  }, [ store.data.peers ])
+    const { group, peers,pubkey } = settings.data
+    if (group !== null && pubkey !== null) {
+      if (peers.length === 0) {
+        setPeers(init_peers(group, pubkey))
+      } else {
+        setPeers(peers)
+      }
+    }
+  }, [ settings.data ])
+
+  useEffect(() => {
+    if (settings.data.pubkey === null) {
+      setPeers([])
+    } else if (
+      settings.data.peers.length === 0 &&
+      settings.data.group !== null
+    ) {
+      setPeers(init_peers(settings.data.group, settings.data.pubkey))
+    }
+  }, [ settings.data.pubkey ])
 
   return (
     <div className="container">
@@ -104,4 +123,15 @@ export function PeerConfigField() {
       }
     </div>
   )
+}
+
+function init_peers (
+  group  : GroupPackage,
+  pubkey : string
+) : PeerConfig[] {
+  const filtered = group.commits.filter(commit => convert_pubkey(commit.pubkey, 'bip340') !== pubkey)
+  return filtered.map(commit => ({
+    pubkey : commit.pubkey,
+    policy : { send: false, recv: true }
+  }))
 }
