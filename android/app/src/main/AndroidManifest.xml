@@ -4,6 +4,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
 
     <application
         android:allowBackup="true"
@@ -19,6 +23,7 @@
         android:hardwareAccelerated="true"
         tools:targetApi="31">
 
+        <!-- Main Activity - runs in main process with PWA and WebView -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -30,8 +35,8 @@
             android:stateNotNeeded="false"
             android:noHistory="false"
             android:allowTaskReparenting="false"
-            android:taskAffinity="com.frostr.igloo.PERSIST"
-            android:process=":persist"
+            android:taskAffinity="com.frostr.igloo.MAIN"
+            android:process=":main"
             android:documentLaunchMode="intoExisting"
             android:relinquishTaskIdentity="false"
             android:lockTaskMode="if_whitelisted">
@@ -48,6 +53,19 @@
 
             <meta-data android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Invisible NIP-55 Handler - lightweight intent handler in separate process -->
+        <activity
+            android:name=".InvisibleNIP55Handler"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:taskAffinity="com.frostr.igloo.HANDLER"
+            android:process=":native_handler"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:stateNotNeeded="true">
 
             <!-- Handle nostrsigner: URLs -->
             <intent-filter android:priority="1000">
@@ -57,22 +75,14 @@
                 <data android:scheme="nostrsigner" />
             </intent-filter>
 
-            <!-- Handle web+nostrsigner: URLs -->
-            <intent-filter android:priority="1000">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="web+nostrsigner" />
-            </intent-filter>
         </activity>
 
-        <!-- NIP-55 Content Provider for background signing -->
-        <provider
-            android:name=".NIP55ContentProvider"
-            android:authorities="com.frostr.igloo.nip55"
-            android:enabled="true"
-            android:exported="true"
-            android:grantUriPermissions="false">
-        </provider>
+        <!-- Keep-Alive Service for NIP-55 Handler Process -->
+        <service
+            android:name=".Nip55KeepAliveService"
+            android:process=":native_handler"
+            android:foregroundServiceType="shortService"
+            android:exported="false" />
+
     </application>
 </manifest>

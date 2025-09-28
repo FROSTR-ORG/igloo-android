@@ -1,205 +1,123 @@
-import { useEffect, useState } from 'react'
-import { useSettings } from '@/context/settings.js'
+import { useState, useEffect } from 'react'
+import { getAllPermissionRules, removePermissionRule, clearAllPermissions } from '@/lib/permissions.js'
 
-import type {
-  PermissionPolicy,
-  PermActionRecord,
-  PermEventRecord
-} from '@/types.js'
+import type { ReactElement } from 'react'
 
-export function PermissionsView() {
-  const settings = useSettings()
+interface SimplePermissionRule {
+  appId: string
+  type: string
+  allowed: boolean
+  timestamp: number
+}
 
-  const [permissions, setPermissions] = useState<PermissionPolicy[]>([])
-  const [changes, setChanges] = useState<boolean>(false)
-  const [saved, setSaved] = useState<boolean>(false)
+/**
+ * Basic Permissions Management Component
+ *
+ * Displays stored permission rules and allows basic management
+ */
+export function PermissionsView(): ReactElement {
+  const [rules, setRules] = useState<SimplePermissionRule[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // Update permissions in the store
-  const update = () => {
-    settings.update({ perms: permissions })
-    setChanges(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
-  }
-
-  // Discard changes by resetting local state from store
-  const cancel = () => {
-    setPermissions(settings.data.perms)
-    setChanges(false)
-  }
-
-  // Remove an action permission
-  const removeActionPermission = (policyIdx: number, actionIdx: number) => {
-    const updatedPermissions = [...permissions]
-    updatedPermissions[policyIdx].action.splice(actionIdx, 1)
-    setPermissions(updatedPermissions)
-    setChanges(true)
-  }
-
-  // Remove an event permission
-  const removeEventPermission = (policyIdx: number, eventIdx: number) => {
-    const updatedPermissions = [...permissions]
-    updatedPermissions[policyIdx].event.splice(eventIdx, 1)
-    setPermissions(updatedPermissions)
-    setChanges(true)
-  }
-
-  // Format timestamp for display
-  const formatTimestamp = (timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleString()
+  const loadRules = () => {
+    try {
+      const storedRules = getAllPermissionRules()
+      setRules(storedRules)
+    } catch (error) {
+      console.error('Failed to load permissions:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    setPermissions(settings.data.perms ?? [])
-  }, [settings.data.perms])
+    loadRules()
+  }, [])
 
-  // Get all action permissions across all policies
-  const getAllActionPermissions = () => {
-    const actions: Array<{permission: PermActionRecord, policyIdx: number, actionIdx: number}> = []
-    permissions.forEach((policy, policyIdx) => {
-      policy.action.forEach((action, actionIdx) => {
-        actions.push({ permission: action, policyIdx, actionIdx })
-      })
-    })
-    return actions
+  const handleRemoveRule = (appId: string, type: string) => {
+    try {
+      removePermissionRule(appId, type)
+      loadRules() // Refresh the list
+    } catch (error) {
+      console.error('Failed to remove permission rule:', error)
+    }
   }
 
-  // Get all event permissions across all policies
-  const getAllEventPermissions = () => {
-    const events: Array<{permission: PermEventRecord, policyIdx: number, eventIdx: number}> = []
-    permissions.forEach((policy, policyIdx) => {
-      policy.event.forEach((event, eventIdx) => {
-        events.push({ permission: event, policyIdx, eventIdx })
-      })
-    })
-    return events
+  const handleClearAll = () => {
+    if (window.confirm('Are you sure you want to clear all permissions? This cannot be undone.')) {
+      try {
+        clearAllPermissions()
+        loadRules() // Refresh the list
+      } catch (error) {
+        console.error('Failed to clear permissions:', error)
+      }
+    }
   }
 
-  const actionPermissions = getAllActionPermissions()
-  const eventPermissions = getAllEventPermissions()
+  const formatDate = (timestamp: number) => {
+    return new Date(timestamp).toLocaleDateString()
+  }
+
+  if (loading) {
+    return (
+      <div className="permissions-view">
+        <h2>Permissions</h2>
+        <p>Loading permissions...</p>
+      </div>
+    )
+  }
 
   return (
-    <div className="container">
-      <h2 className="section-header">Permissions Management</h2>
-      <p className="description">
-        View and manage application permissions. These permissions control which actions and events
-        external applications can perform or access through your signing device.
-      </p>
-
-      {/* Actions Table */}
-      <div className="settings-section">
-        <h3>Action Permissions</h3>
-        <p className="description">
-          Action permissions control which operations external applications can perform.
-        </p>
-
-        {actionPermissions.length === 0 ? (
-          <p className="text-muted">No action permissions configured.</p>
-        ) : (
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host</th>
-                  <th>Action</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th className="action-cell">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {actionPermissions.map(({ permission, policyIdx, actionIdx }, idx) => (
-                  <tr key={idx}>
-                    <td className="overflow-cell">{permission.host}</td>
-                    <td>{permission.action}</td>
-                    <td>
-                      <span className={`status-indicator ${permission.accept ? 'online' : 'offline'}`}>
-                        {permission.accept ? 'Allowed' : 'Denied'}
-                      </span>
-                    </td>
-                    <td>{formatTimestamp(permission.created_at)}</td>
-                    <td className="action-cell">
-                      <button
-                        onClick={() => removeActionPermission(policyIdx, actionIdx)}
-                        className="button button-remove"
-                        title="Remove permission"
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+    <div className="permissions-view">
+      <div className="permissions-header">
+        <h2>App Permissions</h2>
+        <p>Manage which apps can perform signing operations without prompting.</p>
       </div>
 
-      {/* Events Table */}
-      <div className="settings-section">
-        <h3>Event Permissions</h3>
-        <p className="description">
-          Event permissions control which event types external applications can access.
-        </p>
-
-        {eventPermissions.length === 0 ? (
-          <p className="text-muted">No event permissions configured.</p>
-        ) : (
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host</th>
-                  <th>Event Kind</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th className="action-cell">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventPermissions.map(({ permission, policyIdx, eventIdx }, idx) => (
-                  <tr key={idx}>
-                    <td className="overflow-cell">{permission.host}</td>
-                    <td>{permission.kind}</td>
-                    <td>
-                      <span className={`status-indicator ${permission.accept ? 'online' : 'offline'}`}>
-                        {permission.accept ? 'Allowed' : 'Denied'}
-                      </span>
-                    </td>
-                    <td>{formatTimestamp(permission.created_at)}</td>
-                    <td className="action-cell">
-                      <button
-                        onClick={() => removeEventPermission(policyIdx, eventIdx)}
-                        className="button button-remove"
-                        title="Remove permission"
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {rules.length === 0 ? (
+        <div className="no-permissions">
+          <p>No permission rules have been set yet.</p>
+          <p>Grant permissions to apps by checking "Remember my choice" when prompted.</p>
+        </div>
+      ) : (
+        <div className="permissions-list">
+          <div className="permissions-controls">
+            <button
+              className="clear-all-button"
+              onClick={handleClearAll}
+              type="button"
+            >
+              Clear All Permissions
+            </button>
           </div>
-        )}
-      </div>
 
-      {/* Save/Cancel buttons */}
-      {changes && (
-        <div className="action-buttons">
-          <button
-            onClick={update}
-            className={`button button-primary action-button ${saved ? 'saved-button' : ''}`}
-          >
-            {saved ? 'Saved' : 'Save Changes'}
-          </button>
+          <div className="permissions-table">
+            <div className="table-header">
+              <span>App</span>
+              <span>Action</span>
+              <span>Status</span>
+              <span>Date Added</span>
+              <span>Remove</span>
+            </div>
 
-          <button
-            onClick={cancel}
-            className="button"
-          >
-            Cancel
-          </button>
+            {rules.map((rule, index) => (
+              <div key={`${rule.appId}-${rule.type}-${index}`} className="table-row">
+                <span className="app-id">{rule.appId}</span>
+                <span className="action-type">{rule.type}</span>
+                <span className={`status ${rule.allowed ? 'allowed' : 'denied'}`}>
+                  {rule.allowed ? 'Allowed' : 'Denied'}
+                </span>
+                <span className="date">{formatDate(rule.timestamp)}</span>
+                <button
+                  className="remove-button"
+                  onClick={() => handleRemoveRule(rule.appId, rule.type)}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

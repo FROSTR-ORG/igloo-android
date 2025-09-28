@@ -159,7 +159,7 @@ See `components/permissions/README.md` for detailed permissions documentation.
 ## Core Libraries
 
 ### NIP-55 Support (`lib/nip55.ts`)
-- **URL Parsing**: Handles `nostrsigner:` and `web+nostrsigner:` schemes
+- **URL Parsing**: Handles `nostrsigner:` scheme
 - **Request Validation**: Type-safe NIP-55 request parsing
 - **Parameter Extraction**: Query parameter and path parsing
 - **Android Integration**: Intent data handling

@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react'
 import { useBifrost }                from '@/hooks/useBifrost.js'
 
 import type { ReactElement }                  from 'react'
-import type { BifrostNodeAPI, ProviderProps } from '@/types.js'
+import type { BifrostNodeAPI, ProviderProps } from '@/types/index.js'
 
 const context = createContext<BifrostNodeAPI | null>(null)
 

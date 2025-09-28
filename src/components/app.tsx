@@ -1,18 +1,20 @@
-
-import { Header } from '@/components/layout/header.js'
-import { Tabs }   from '@/components/layout/tabs.js'
+import { Header }        from '@/components/layout/header.js'
+import { Tabs }          from '@/components/layout/tabs.js'
 import { PromptManager } from '@/components/prompt/index.js'
-import { useNIP55Handler } from '@/hooks/useNIP55Handler.js'
+import { NIP55Bridge }   from '@/components/nip55-bridge.js'
 
+/**
+ * Main application component
+ *
+ * Renders the core UI and initializes the NIP-55 signing bridge
+ */
 export function App () {
-  // Initialize NIP-55 URL handling
-  useNIP55Handler()
-
   return (
     <div className="app">
       <Header />
       <Tabs />
       <PromptManager />
+      <NIP55Bridge />
     </div>
   )
 }

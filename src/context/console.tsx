@@ -8,7 +8,7 @@ import type {
   LogType,
   ProviderProps,
   WebConsoleAPI
-} from '@/types.js'
+} from '@/types/index.js'
 
 import type { ReactElement } from 'react'
 

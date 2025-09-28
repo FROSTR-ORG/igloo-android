@@ -28,7 +28,12 @@
     "keygen": "tsx script/keygen.ts",
     "relay": "tsx script/relay.ts",
     "release": "tsx script/release.ts",
-    "test": "tsx test/tape.ts"
+    "test": "tsx test/tape.ts",
+    "test:nip55": "tsx test/nip55-test-runner.ts",
+    "test:browser": "node test/browser-debug-test.cjs",
+    "test:nip55-browser": "node test/browser-nip55-test.cjs",
+    "setup": "node test/manual-setup.cjs",
+    "test:all": "npm run test && npm run test:nip55"
   },
   "dependencies": {
     "@cmdcode/nostr-p2p": "^2.0.11",
@@ -52,6 +57,7 @@
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
     "esbuild": "^0.25.10",
+    "playwright": "^1.55.1",
     "serve": "^14.2.5",
     "tape": "^5.9.0",
     "tsx": "^4.20.5",

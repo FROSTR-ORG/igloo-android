@@ -434,35 +434,90 @@ th, td {
 
 .peers-table th,
 .peers-table td {
-  padding: 2px 4px;
+  padding: 4px 8px;
+  vertical-align: middle;
 }
 
-/* First column - Peer address */
+/* First column - Peer address - takes remaining space */
 .peers-table th:nth-child(1),
 .peers-table td:nth-child(1) {
-  width: 220px;
-  max-width: 220px;
+  width: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Second column - Status */
+/* Second column - Status - minimal width */
 .peers-table th:nth-child(2),
 .peers-table td:nth-child(2) {
-  width: 30px;
-  max-width: 60px;
+  width: 80px;
   text-align: center;
+  white-space: nowrap;
 }
 
-/* Third column - Refresh button */
+/* Third column - Refresh button - minimal width */
 .peers-table th:nth-child(3),
 .peers-table td:nth-child(3),
 .peers-table .refresh-cell {
-  width: 30px;
-  max-width: 44px;
-  padding: 2px;
+  width: 60px;
   text-align: center;
+  padding: 2px 4px;
+}
+
+/* Mobile responsive styles for peers table */
+@media (max-width: 600px) {
+  .peers-table {
+    font-size: 0.85rem;
+  }
+
+  .peers-table th,
+  .peers-table td {
+    padding: 3px 4px;
+    vertical-align: middle;
+  }
+
+  /* Mobile column widths - keep first column flexible */
+  .peers-table th:nth-child(1),
+  .peers-table td:nth-child(1) {
+    font-size: 0.8rem;
+  }
+
+  .peers-table th:nth-child(2),
+  .peers-table td:nth-child(2) {
+    width: 70px;
+    font-size: 0.8rem;
+  }
+
+  .peers-table th:nth-child(3),
+  .peers-table td:nth-child(3),
+  .peers-table .refresh-cell {
+    width: 50px;
+    padding: 3px 2px;
+  }
+
+  .status-indicator {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+  }
+}
+
+/* Refresh button centering - applies to all screen sizes */
+.peers-table .refresh-cell {
+  text-align: center !important;
+}
+
+.peers-table .refresh-cell .button {
+  margin: 0 auto;
+  padding: 0.3rem;
+  font-size: 0.75rem;
+  min-width: auto;
+  height: 1.8rem;
+  width: 1.8rem;
+  border-radius: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .status-indicator {

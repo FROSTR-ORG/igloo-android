@@ -1,125 +1,128 @@
-// Permission utility functions for NIP-55 request handling
-
-import type {
-  NIP55Request,
-  PermissionPolicy,
-  PermActionRecord,
-  PermEventRecord
-} from '@/types.js'
-
 /**
- * Check if an existing permission exists for a given request
+ * Simple Permission Manager
+ *
+ * Basic permission storage using localStorage for NIP-55 requests.
+ * Supports simple allow/deny rules without complex synchronization.
  */
-export function findExistingPermission(
-  request: NIP55Request,
-  permissions: PermissionPolicy[]
-): PermActionRecord | PermEventRecord | null {
-  for (const policy of permissions) {
-    if (request.type === 'sign_event') {
-      const eventRecord = policy.event.find((e: PermEventRecord) =>
-        e.host === request.host && e.kind === request.event?.kind
-      )
-      if (eventRecord) return eventRecord
-    } else {
-      const actionRecord = policy.action.find((a: PermActionRecord) =>
-        a.host === request.host && a.action === request.type
-      )
-      if (actionRecord) return actionRecord
-    }
-  }
-  return null
+
+import type { NIP55Request } from '@/types/index.js'
+
+interface SimplePermissionRule {
+  appId: string
+  type: string
+  allowed: boolean
+  timestamp: number
 }
 
+const STORAGE_KEY = 'nip55_permissions'
+
 /**
- * Add a new permission record to the permissions array
+ * Get all stored permission rules
  */
-export function addPermissionRecord(
-  request: NIP55Request,
-  accept: boolean,
-  permissions: PermissionPolicy[]
-): PermissionPolicy[] {
-  const timestamp = Math.floor(Date.now() / 1000)
-  const updatedPermissions = [...permissions]
-
-  // Find existing policy for this host or create new one
-  let policy = updatedPermissions.find(p =>
-    p.action.some(a => a.host === request.host) ||
-    p.event.some(e => e.host === request.host)
-  )
-
-  if (!policy) {
-    policy = { action: [], event: [] }
-    updatedPermissions.push(policy)
+function getStoredRules(): SimplePermissionRule[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? JSON.parse(stored) : []
+  } catch (error) {
+    console.error('Failed to load permissions:', error)
+    return []
   }
-
-  // Add the new permission
-  if (request.type === 'sign_event') {
-    // Remove any existing permission for this host/kind combination
-    policy.event = policy.event.filter((e: PermEventRecord) =>
-      !(e.host === request.host && e.kind === request.event?.kind)
-    )
-
-    policy.event.push({
-      host: request.host,
-      kind: request.event?.kind || 0,
-      type: 'event',
-      accept,
-      created_at: timestamp
-    })
-  } else {
-    // Remove any existing permission for this host/action combination
-    policy.action = policy.action.filter((a: PermActionRecord) =>
-      !(a.host === request.host && a.action === request.type)
-    )
-
-    policy.action.push({
-      host: request.host,
-      action: request.type,
-      type: 'action',
-      accept,
-      created_at: timestamp
-    })
-  }
-
-  return updatedPermissions
 }
 
 /**
- * Clean up duplicate permissions (remove older duplicates)
+ * Save permission rules to localStorage
  */
-export function deduplicatePermissions(permissions: PermissionPolicy[]): PermissionPolicy[] {
-  return permissions.map(policy => ({
-    action: deduplicateActionRecords(policy.action),
-    event: deduplicateEventRecords(policy.event)
-  })).filter(policy => policy.action.length > 0 || policy.event.length > 0)
+function saveRules(rules: SimplePermissionRule[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
+  } catch (error) {
+    console.error('Failed to save permissions:', error)
+  }
 }
 
-function deduplicateActionRecords(actions: PermActionRecord[]): PermActionRecord[] {
-  const seen = new Map<string, PermActionRecord>()
-
-  for (const action of actions) {
-    const key = `${action.host}:${action.action}`
-    const existing = seen.get(key)
-
-    if (!existing || action.created_at > existing.created_at) {
-      seen.set(key, action)
-    }
-  }
-
-  return Array.from(seen.values())
+/**
+ * Create a permission key for a request
+ */
+function createPermissionKey(appId: string, type: string): string {
+  return `${appId}:${type}`
 }
 
-function deduplicateEventRecords(events: PermEventRecord[]): PermEventRecord[] {
-  const seen = new Map<string, PermEventRecord>()
+/**
+ * Check if a request has an existing permission rule
+ */
+export function checkPermission(request: NIP55Request): 'allowed' | 'denied' | 'prompt_required' {
+  const rules = getStoredRules()
+  const appId = request.host || 'unknown'
+  const key = createPermissionKey(appId, request.type)
 
-  for (const event of events) {
-    const key = `${event.host}:${event.kind}`
-    const existing = seen.get(key)
+  const rule = rules.find(r => createPermissionKey(r.appId, r.type) === key)
 
-    if (!existing || event.created_at > existing.created_at) {
-      seen.set(key, event)
-    }
+  if (rule) {
+    return rule.allowed ? 'allowed' : 'denied'
   }
 
-  return Array.from(seen.values())
+  return 'prompt_required'
+}
+
+/**
+ * Add a permission rule (when user chooses "remember")
+ */
+export function addPermissionRule(appId: string, type: string, allowed: boolean): void {
+  const rules = getStoredRules()
+  const key = createPermissionKey(appId, type)
+
+  // Remove existing rule for this app+type
+  const filteredRules = rules.filter(r => createPermissionKey(r.appId, r.type) !== key)
+
+  // Add new rule
+  filteredRules.push({
+    appId,
+    type,
+    allowed,
+    timestamp: Date.now()
+  })
+
+  saveRules(filteredRules)
+  console.log(`Permission rule added: ${appId}:${type} = ${allowed}`)
+}
+
+/**
+ * Remove a permission rule
+ */
+export function removePermissionRule(appId: string, type: string): void {
+  const rules = getStoredRules()
+  const key = createPermissionKey(appId, type)
+
+  const filteredRules = rules.filter(r => createPermissionKey(r.appId, r.type) !== key)
+  saveRules(filteredRules)
+  console.log(`Permission rule removed: ${appId}:${type}`)
+}
+
+/**
+ * Get all permission rules for display/management
+ */
+export function getAllPermissionRules(): SimplePermissionRule[] {
+  return getStoredRules()
+}
+
+/**
+ * Clear all permission rules
+ */
+export function clearAllPermissions(): void {
+  localStorage.removeItem(STORAGE_KEY)
+  console.log('All permissions cleared')
+}
+
+/**
+ * Legacy compatibility object for existing code
+ * TODO: Remove this when all references are updated
+ */
+export const unifiedPermissions = {
+  checkPermission,
+  addAutoApprovalRule: (rule: any) => {
+    // Legacy compatibility - convert to simple rule
+    addPermissionRule(rule.appId, rule.scope.actions[0], true)
+  },
+  removeRule: removePermissionRule,
+  clearAll: clearAllPermissions
 }

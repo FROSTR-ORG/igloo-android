@@ -1,20 +1,20 @@
 # Android Wrapper Directory (android/)
 
-This directory contains the Android application shell that wraps the Igloo PWA, providing native Android integration, secure storage, and NIP-55 intent handling. The wrapper enables the PWA to operate as a full-featured Android app with deep system integration.
+This directory contains the Android application shell that wraps the Igloo PWA, providing native Android integration, secure storage, polyfill bridges, and NIP-55 intent handling. The wrapper enables the PWA to operate as a full-featured Android app with deep system integration and modern web API support.
 
 ## Architecture Overview
 
-### Hybrid Application Design
-The Android wrapper implements a lightweight native shell around the React PWA with four key components:
+### Hybrid Application Design with Secure Polyfills
+The Android wrapper implements a secure native shell around the React PWA with modern bridge architecture:
 
-1. **WebView Container**: Chrome-based WebView for rendering the PWA
-2. **Local Web Server**: Serves PWA assets from Android assets directory
-3. **Secure Storage Bridge**: Android Keystore integration for cryptographic keys
-4. **JavaScript Bridge**: Bidirectional communication between PWA and Android
+1. **WebView Container**: Chrome-based WebView with secure polyfill injection
+2. **Polyfill Bridge System**: Modern API implementations for camera, storage, and WebSocket
+3. **Secure Storage Bridge**: Android Keystore integration with encryption
+4. **NIP-55 Intent Handling**: Nostr protocol integration for signing requests
 
 ### Development vs Production Modes
-- **Development Mode**: WebView loads PWA from development server (`http://10.0.2.2:3000`)
-- **Production Mode**: Local web server serves bundled PWA assets from `app/src/main/assets/www/`
+- **Development Mode**: WebView loads PWA from development server (`http://localhost:3000`)
+- **Production Mode**: WebView serves bundled PWA assets with custom protocol (`igloopwa://`)
 
 ## Directory Structure
 
@@ -30,19 +30,23 @@ android/
     ├── build.gradle              # App module build configuration
     ├── src/main/
     │   ├── AndroidManifest.xml   # App manifest with permissions and intents
-    │   ├── java/com/frostr/igloo/
-    │   │   ├── MainActivity.java     # Main Activity with WebView management
-    │   │   ├── SecureStorage.java    # Android Keystore secure storage
-    │   │   ├── JavaScriptBridge.java # PWA ↔ Android communication
-    │   │   ├── LocalWebServer.java   # HTTP server for PWA assets
-    │   │   └── NIP55Bridge.java      # NIP-55 intent result handling
-    │   ├── res/                  # Android resources
-    │   │   ├── values/strings.xml    # String resources
-    │   │   ├── xml/shortcuts.xml     # App shortcuts configuration
-    │   │   ├── xml/backup_rules.xml  # Backup and restore rules
-    │   │   ├── xml/data_extraction_rules.xml # Data extraction rules
-    │   │   └── mipmap-*/         # App launcher icons
-    │   └── assets/www/           # PWA build output (copied from ../../dist/)
+    │   ├── kotlin/com/frostr/igloo/
+    │   │   ├── SecureMainActivity.kt     # Main Activity with secure WebView
+    │   │   └── bridges/          # Modern bridge implementations
+    │   │       ├── ModernCameraBridge.kt    # CameraX API bridge
+    │   │       ├── SecureStorageBridge.kt   # Encrypted storage bridge
+    │   │       ├── WebSocketBridge.kt       # OkHttp WebSocket bridge
+    │   │       └── SecureWebViewClient.kt   # Polyfill injection client
+    │   ├── assets/               # PWA assets and polyfills
+    │   │   └── polyfills/        # JavaScript polyfill implementations
+    │   │       ├── camera-polyfill.js      # MediaDevices API polyfill
+    │   │       ├── storage-polyfill.js     # Web Storage API polyfill
+    │   │       └── websocket-polyfill.js   # WebSocket API polyfill
+    │   └── res/                  # Android resources
+    │       ├── values/strings.xml    # String resources
+    │       ├── xml/shortcuts.xml     # App shortcuts configuration
+    │       ├── xml/backup_rules.xml  # Backup and restore rules
+    │       └── mipmap-*/         # App launcher icons
     └── build/                    # Generated build artifacts
 ```
 
@@ -52,12 +56,12 @@ android/
 ```gradle
 android {
     namespace 'com.frostr.igloo'
-    compileSdk 34
+    compileSdk 35               # Android 15
 
     defaultConfig {
         applicationId "com.frostr.igloo"
-        minSdk 24          // Android 7.0 (Nougat)
-        targetSdk 34       // Android 14
+        minSdk 24               # Android 7.0 (Nougat)
+        targetSdk 35            # Android 15
         versionCode 1
         versionName "1.0"
     }
@@ -67,134 +71,195 @@ android {
 ### Key Dependencies
 - `androidx.appcompat:appcompat:1.6.1` - Android support library
 - `androidx.constraintlayout:constraintlayout:2.1.4` - Layout management
+- `com.squareup.okhttp3:okhttp:4.12.0` - Modern WebSocket client
+- `androidx.security:security-crypto:1.1.0-alpha06` - Encrypted storage
+- `androidx.camera:camera-*:1.4.0` - Modern CameraX API
+- `com.google.mlkit:barcode-scanning:17.3.0` - QR code scanning
+- `com.google.code.gson:gson:2.10.1` - JSON serialization
 
 ### Gradle Build System
-- **Android Gradle Plugin**: 8.7.0
+- **Android Gradle Plugin**: 8.1.4
 - **Java Compatibility**: VERSION_1_8 (Java 8)
-- **Repository Sources**: Google Maven, Maven Central
+- **Kotlin**: Latest stable version
 
 ## Core Components
 
-### MainActivity (`MainActivity.java`)
+### SecureMainActivity (`SecureMainActivity.kt`)
 
-The main Activity class that manages the entire Android application lifecycle.
+The main Activity class that manages the secure PWA container with modern polyfill architecture.
 
 #### Key Features
-- **WebView Management**: Configures and manages Chrome WebView with full JavaScript support
+- **Secure WebView Management**: Modern Chrome WebView with polyfill injection
 - **Development Mode**: Automatic switching between development server and production assets
-- **Intent Handling**: Processes NIP-55 URL schemes (`nostrsigner:`, `web+nostrsigner:`)
-- **Bridge Setup**: Initializes JavaScript bridges for PWA ↔ Android communication
-- **Lifecycle Management**: Handles pause/resume with connection recovery
-- **Session Persistence**: Android-specific session management
+- **NIP-55 Intent Handling**: Processes Nostr signing URL schemes (`nostrsigner:`)
+- **Bridge Setup**: Initializes secure JavaScript bridges for PWA ↔ Android communication
+- **Polyfill Injection**: Transparent API replacement before PWA JavaScript execution
+- **Session Persistence**: Android-specific session management with encrypted storage
 
-#### WebView Configuration
-```java
-webSettings.setJavaScriptEnabled(true);
-webSettings.setDomStorageEnabled(true);
-webSettings.setDatabaseEnabled(true);
-webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+#### Modern Bridge Architecture
+```kotlin
+// Bridge registration in SecureMainActivity
+webSocketBridge = WebSocketBridge(webView)
+webView.addJavascriptInterface(webSocketBridge, "WebSocketBridge")
+
+storageBridge = SecureStorageBridge(this)
+webView.addJavascriptInterface(storageBridge, "SecureStorageBridge")
+
+cameraBridge = ModernCameraBridge(this, webView)
+webView.addJavascriptInterface(cameraBridge, "CameraBridge")
 ```
 
-#### Intent Processing
-- Extracts NIP-55 data from Android intents
-- Passes intent data to PWA via URL parameters
-- Handles both direct scheme links and browser redirects
+### ModernCameraBridge (`ModernCameraBridge.kt`)
 
-### SecureStorage (`SecureStorage.java`)
-
-Provides cryptographically secure storage using Android Keystore.
+Modern camera implementation using CameraX API with full MediaDevices compatibility.
 
 #### Features
-- **Android Keystore Integration**: Hardware-backed key storage where available
-- **AES-GCM Encryption**: 256-bit encryption with authenticated encryption
-- **Automatic Key Generation**: Creates encryption keys on first use
-- **SharedPreferences Backend**: Encrypted data stored in app preferences
-- **Key Management**: Secure key lifecycle management
-
-#### Security Implementation
-- **Encryption**: `AES/GCM/NoPadding` with 96-bit IV and 128-bit authentication tag
-- **Key Protection**: Keys stored in Android Keystore (hardware security module when available)
-- **No User Authentication Required**: Keys accessible to app without user PIN/biometric
-- **Automatic IV Generation**: Unique IV for each encryption operation
+- **CameraX 1.4.0 API**: Latest Android camera framework
+- **Virtual Camera Support**: Emulator compatibility with fallback cameras
+- **MediaDevices API**: 100% compatible with `navigator.mediaDevices.getUserMedia()`
+- **Camera Enumeration**: Proper device discovery using ProcessCameraProvider
+- **Lifecycle Management**: Integration with AppCompatActivity lifecycle
+- **Error Handling**: Robust fallback to virtual cameras on initialization failure
 
 #### API Methods
-```java
-boolean storeSecret(String key, String value)    // Store encrypted value
-String retrieveSecret(String key)                // Retrieve and decrypt value
-boolean hasSecret(String key)                    // Check if key exists
-boolean deleteSecret(String key)                 // Remove stored value
-void clearAll()                                  // Clear all stored values
+```kotlin
+@JavascriptInterface
+fun enumerateDevices(): String              // Lists available cameras
+@JavascriptInterface
+fun getUserMedia(constraintsJson: String): String  // Creates camera stream
+@JavascriptInterface
+fun stopUserMedia(streamId: String): String        // Stops camera stream
+@JavascriptInterface
+fun getCapabilities(deviceId: String): String      // Gets camera capabilities
 ```
 
-### JavaScriptBridge (`JavaScriptBridge.java`)
+### SecureStorageBridge (`SecureStorageBridge.kt`)
 
-Bidirectional communication bridge between PWA JavaScript and Android native code.
-
-#### JavaScript Interface Methods
-All methods are annotated with `@JavascriptInterface` for WebView access:
-
-```javascript
-// Available in PWA as window.AndroidSecureStorage
-window.AndroidSecureStorage.storeSecret(key, value)
-window.AndroidSecureStorage.getSecret(key)
-window.AndroidSecureStorage.hasSecret(key)
-window.AndroidSecureStorage.deleteSecret(key)
-window.AndroidSecureStorage.clearAllSecrets()
-window.AndroidSecureStorage.getDeviceInfo()
-window.AndroidSecureStorage.log(message)
-```
-
-#### Integration
-- **Secure Storage Access**: Direct interface to SecureStorage operations
-- **Logging Bridge**: PWA logs routed to Android system logs
-- **Device Information**: Android environment detection
-- **Thread Safety**: All operations safe for WebView JavaScript thread
-
-### LocalWebServer (`LocalWebServer.java`)
-
-HTTP server for serving PWA assets in production mode.
+Encrypted storage bridge using Android Keystore with Web Storage API compatibility.
 
 #### Features
-- **Localhost Only**: Binds to `127.0.0.1` for security
-- **Port 8090**: Default serving port
-- **Asset Serving**: Serves files from `app/src/main/assets/www/`
-- **MIME Type Detection**: Automatic content-type headers
-- **CORS Headers**: Cross-origin support for PWA features
-- **404 Handling**: Proper error responses for missing files
+- **Android Keystore Integration**: Hardware-backed encryption where available
+- **AES256-GCM Encryption**: Authenticated encryption with 256-bit keys
+- **Web Storage API**: Full compatibility with `localStorage` and `sessionStorage`
+- **Quota Management**: 10MB storage limit with proper quota checking
+- **Storage Events**: Cross-tab communication event simulation
+- **Session Isolation**: Automatic session storage clearing on app restart
 
-#### Security Considerations
-- **Loopback Interface Only**: Not accessible from network
-- **Asset Directory Restriction**: Only serves files from designated assets
-- **No Directory Traversal**: Path validation prevents access outside assets
+#### Security Implementation
+- **Encryption**: `AES256_GCM` with `AES256_SIV` key encryption
+- **Master Key**: Generated using Android Keystore with hardware protection
+- **SharedPreferences Backend**: Encrypted data stored in app preferences
+- **Storage Isolation**: Separate local and session storage implementations
 
-#### Supported File Types
-- HTML, CSS, JavaScript, JSON
-- PNG, JPEG, ICO images
-- Source maps for debugging
-
-### NIP55Bridge (`NIP55Bridge.java`)
-
-Handles NIP-55 signing request results and intent responses.
-
-#### Features
-- **Result Handling**: Processes PWA signing operation results
-- **Intent Data Packaging**: Formats results for calling applications
-- **Request ID Tracking**: Maintains correlation between requests and responses
-- **Activity Result Management**: Proper Android activity result handling
-
-#### JavaScript Interface
-```javascript
-// Called from PWA to approve signing requests
-window.nip55Bridge.approveRequest(result, id, event)
-window.nip55Bridge.denyRequest(reason, id)
+#### API Methods
+```kotlin
+@JavascriptInterface
+fun setItem(storageType: String, key: String, value: String): String
+@JavascriptInterface
+fun getItem(storageType: String, key: String): String?
+@JavascriptInterface
+fun removeItem(storageType: String, key: String): String
+@JavascriptInterface
+fun clear(storageType: String): String
+@JavascriptInterface
+fun length(storageType: String): Int
+@JavascriptInterface
+fun key(storageType: String, index: Int): String?
 ```
 
-#### Result Intent Structure
-```java
-resultIntent.putExtra("result", signatureOrResult);
-resultIntent.putExtra("package", "com.frostr.igloo");
-resultIntent.putExtra("id", requestId);
-resultIntent.putExtra("event", signedEvent);  // For sign_event requests
+### WebSocketBridge (`WebSocketBridge.kt`)
+
+Modern WebSocket implementation using OkHttp 4.12.0 with full WebSocket API compatibility.
+
+#### Features
+- **OkHttp 4.12.0**: Modern HTTP client with robust WebSocket support
+- **Connection Management**: Automatic reconnection and lifecycle management
+- **Message Queuing**: Queues messages during connection establishment
+- **Protocol Support**: Full WebSocket subprotocol negotiation
+- **Error Handling**: Comprehensive error handling with event notifications
+- **Connection Pooling**: Efficient resource management for multiple connections
+
+#### API Methods
+```kotlin
+@JavascriptInterface
+fun createWebSocket(url: String, protocols: String = ""): String
+@JavascriptInterface
+fun sendMessage(connectionId: String, message: String): String
+@JavascriptInterface
+fun closeWebSocket(connectionId: String, code: Int = 1000, reason: String = ""): String
+@JavascriptInterface
+fun getConnectionState(connectionId: String): String
+```
+
+### SecureWebViewClient (`SecureWebViewClient.kt`)
+
+Custom WebView client that handles polyfill injection and secure asset serving.
+
+#### Features
+- **Polyfill Injection**: Loads and injects polyfills before PWA JavaScript execution
+- **Custom Protocol Support**: Handles `igloopwa://` protocol for secure asset serving
+- **Security Policy**: Blocks external HTTP/HTTPS requests except localhost
+- **Asset Management**: Serves PWA assets from Android assets directory
+- **MIME Type Detection**: Proper content-type headers for all asset types
+- **Development Support**: Allows localhost development server access
+
+#### Polyfill Loading
+```kotlin
+private fun injectPolyfills(webView: WebView) {
+    // Inject polyfills in correct order
+    val webSocketPolyfill = loadPolyfillScript("websocket-polyfill.js")
+    val storagePolyfill = loadPolyfillScript("storage-polyfill.js")
+    val cameraPolyfill = loadPolyfillScript("camera-polyfill.js")
+
+    // Execute polyfills before PWA JavaScript
+    webView.evaluateJavascript(webSocketPolyfill) { /* ... */ }
+    webView.evaluateJavascript(storagePolyfill) { /* ... */ }
+    webView.evaluateJavascript(cameraPolyfill) { /* ... */ }
+}
+```
+
+## Polyfill System
+
+### JavaScript Polyfills
+
+The polyfill system provides transparent API replacement for modern web APIs:
+
+#### Camera Polyfill (`camera-polyfill.js`)
+- **MediaDevices API**: Complete replacement for `navigator.mediaDevices`
+- **MediaStream API**: Full MediaStream and MediaStreamTrack implementation
+- **Device Enumeration**: Camera device discovery and management
+- **Constraints Handling**: Video constraints parsing and validation
+- **Event System**: Complete event handling for stream lifecycle
+
+#### Storage Polyfill (`storage-polyfill.js`)
+- **Web Storage API**: Complete `localStorage` and `sessionStorage` replacement
+- **Storage Events**: Cross-tab communication event simulation
+- **Quota Management**: Storage quota checking and enforcement
+- **Type Conversion**: Automatic string conversion per Web Storage spec
+- **Error Handling**: Proper DOMException throwing for quota exceeded
+
+#### WebSocket Polyfill (`websocket-polyfill.js`)
+- **WebSocket API**: Complete WebSocket interface replacement
+- **Event System**: Full event handling (open, message, close, error)
+- **Binary Data**: Support for ArrayBuffer and Blob message types
+- **Protocol Negotiation**: WebSocket subprotocol support
+- **Connection Management**: Automatic connection state management
+
+### Polyfill Architecture
+
+```javascript
+// Polyfill injection replaces native APIs transparently
+Object.defineProperty(navigator, 'mediaDevices', {
+    get: function() { return secureMediaDevices; },
+    enumerable: true,
+    configurable: false
+});
+
+// PWA code remains unchanged
+navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => {
+        // Stream provided by Android CameraX bridge
+    });
 ```
 
 ## Android Manifest Configuration
@@ -210,17 +275,10 @@ resultIntent.putExtra("event", signedEvent);  // For sign_event requests
 ```xml
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.CAMERA" />
 ```
 
 ### Intent Filters
-
-#### Launcher Intent
-```xml
-<intent-filter android:priority="1000">
-    <action android:name="android.intent.action.MAIN" />
-    <category android:name="android.intent.category.LAUNCHER" />
-</intent-filter>
-```
 
 #### NIP-55 URL Scheme Handling
 ```xml
@@ -232,32 +290,16 @@ resultIntent.putExtra("event", signedEvent);  // For sign_event requests
     <data android:scheme="nostrsigner" />
 </intent-filter>
 
-<!-- Handle web+nostrsigner: URLs -->
-<intent-filter android:priority="1000">
-    <action android:name="android.intent.action.VIEW" />
-    <category android:name="android.intent.category.DEFAULT" />
-    <category android:name="android.intent.category.BROWSABLE" />
-    <data android:scheme="web+nostrsigner" />
-</intent-filter>
 ```
-
-#### Activity Properties
-- **Launch Mode**: `singleInstance` - Only one instance of activity
-- **Always Retain Task State**: Preserves PWA state during system memory pressure
-- **Exclude From Recents**: `false` - Appears in recent apps list
-
-### App Shortcuts
-Configures long-press app shortcuts:
-- **Update App**: Manual update checking functionality
 
 ## Development Workflow
 
 ### Building the Android App
 
 #### Prerequisites
-- Android SDK 34 (Android 14)
+- Android SDK 35 (Android 15)
 - Java 8 or higher
-- Gradle 8.7+
+- Gradle 8.1+
 
 #### Build Commands
 ```bash
@@ -272,6 +314,9 @@ Configures long-press app shortcuts:
 
 # Install debug APK to connected device
 ./gradlew installDebug
+
+# Compile Kotlin sources
+./gradlew compileDebugKotlin
 ```
 
 #### Build Outputs
@@ -281,211 +326,149 @@ Configures long-press app shortcuts:
 ### Development vs Production Setup
 
 #### Development Mode
-1. Set `DEVELOPMENT_MODE = true` in MainActivity
-2. Start PWA dev server: `npm run dev` (from project root)
-3. WebView loads from `http://10.0.2.2:3000` (Android emulator host mapping)
-4. Hot reload and dev tools available
+1. PWA dev server running on port 3000
+2. WebView loads from `http://localhost:3000`
+3. Hot reload and dev tools available
+4. Polyfills injected for secure API access
 
 #### Production Mode
-1. Set `DEVELOPMENT_MODE = false` in MainActivity
-2. Build PWA: `npm run build` (from project root)
-3. Copy `dist/` contents to `app/src/main/assets/www/`
-4. LocalWebServer serves PWA from assets
-
-### Asset Management
-
-#### Automatic Asset Copying
-The build process should copy PWA build output to Android assets:
-```bash
-# Copy PWA build to Android assets
-cp -r ../../dist/* app/src/main/assets/www/
-```
-
-#### Asset Structure
-```
-app/src/main/assets/www/
-├── index.html
-├── app.js
-├── app.js.map
-├── sw.js
-├── sw.js.map
-├── manifest.json
-├── favicon.ico
-├── icons/logo.png
-└── styles/
-    ├── global.css
-    ├── layout.css
-    ├── console.css
-    ├── node.css
-    ├── settings.css
-    ├── prompt.css
-    ├── scanner.css
-    └── sessions.css
-```
+1. PWA built to `dist/` directory
+2. Assets served via custom `igloopwa://` protocol
+3. Polyfills provide secure API implementations
+4. Full security policies enforced
 
 ### Debugging
 
 #### Android Logs
 ```bash
-# View all app logs
-adb logcat -s IglooWrapper:* PWA-*:*
+# View secure component logs
+adb logcat -s "SecureIglooWrapper:*" "ModernCameraBridge:*" "SecureStorageBridge:*" "WebSocketBridge:*"
 
-# View JavaScript bridge logs
-adb logcat -s JavaScriptBridge:*
-
-# View secure storage logs
-adb logcat -s SecureStorage:*
+# View polyfill injection logs
+adb logcat -s "SecureWebViewClient:*"
 
 # Clear logs
 adb logcat -c
 ```
 
 #### WebView Debugging
-1. Enable WebView debugging in MainActivity:
-   ```java
-   WebView.setWebContentsDebuggingEnabled(true);
-   ```
+1. WebView debugging automatically enabled in development
 2. Open Chrome DevTools: `chrome://inspect/#devices`
 3. Select the Igloo WebView for debugging
-
-#### NIP-55 Intent Testing
-Use the provided test script from project root:
-```bash
-./test-nip55-intents.sh
-```
+4. Console shows polyfill loading and API calls
 
 ## Security Considerations
 
-### Android Keystore
+### Modern Security Architecture
+- **Polyfill Isolation**: Each API bridge operates independently
+- **Encrypted Storage**: All persistent data encrypted with Android Keystore
+- **Network Security**: LocalWebServer removed, custom protocol for assets
+- **API Security**: Bridges only expose necessary methods with validation
+
+### Android Keystore Integration
 - **Hardware Security Module**: Uses TEE or Secure Element when available
 - **Key Isolation**: Keys cannot be extracted from Keystore
 - **Authenticated Encryption**: AES-GCM provides both confidentiality and integrity
 - **Key Lifecycle**: Keys tied to app installation (cleared on uninstall)
 
-### Network Security
-- **Localhost Binding**: LocalWebServer only accessible from app
-- **HTTPS Development**: Development server uses HTTP (localhost exception)
-- **Clear Text Traffic**: Limited to development mode only
-
 ### WebView Security
-- **Content Security**: Only loads PWA assets or development server
+- **Polyfill Injection**: APIs replaced before PWA JavaScript execution
+- **Content Security**: Only loads PWA assets via secure protocol
 - **JavaScript Sandboxing**: WebView JavaScript cannot access Android filesystem
 - **Bridge Interface**: Only exposed methods accessible from JavaScript
 
-### Intent Security
-- **Scheme Validation**: Only processes valid NIP-55 URL schemes
-- **Package Verification**: Results include originating package name
-- **Intent Extras Validation**: Input validation on all intent data
-
 ## Integration with PWA
 
-### Bridge Interface Usage
-The PWA accesses Android functionality through global objects:
+### Transparent API Replacement
+The PWA code remains completely unchanged while using secure Android implementations:
 
 ```typescript
-// TypeScript definitions (from src/types.ts)
-interface AndroidSecureStorage {
-  storeSecret(key: string, value: string): boolean
-  getSecret(key: string): string | null
-  hasSecret(key: string): boolean
-  deleteSecret(key: string): boolean
-  clearAllSecrets(): void
-  getDeviceInfo(): string
-  log(message: string): void
-}
+// PWA code works exactly as written for web
+navigator.mediaDevices.getUserMedia({ video: true })  // → ModernCameraBridge
+localStorage.setItem('key', 'value')                  // → SecureStorageBridge
+new WebSocket('wss://example.com')                    // → WebSocketBridge
+```
 
-declare global {
-  interface Window {
-    AndroidSecureStorage?: AndroidSecureStorage
-    nip55Bridge?: {
-      approveRequest(result: string, id: string, event: string): void
-      denyRequest(reason: string, id: string): void
-    }
-  }
+### Bridge Interface Usage
+All bridges are accessed transparently through standard web APIs. No special Android code required in PWA.
+
+### NIP-55 Flow (Android → PWA Signing Device)
+The Android layer acts as a **secure NIP-55 gateway** that forwards signing requests to the PWA's FROSTR implementation:
+
+1. **External app** sends NIP-55 intent: `nostrsigner:$eventJson` with Intent extras
+2. **Android** receives intent, checks app permissions via PermissionStore
+3. **Android** builds NIP-55 request object and calls `window.nostr.nip55(request)` via JavaScript
+4. **PWA** performs actual cryptographic signing using FROSTR with real private keys
+5. **PWA** returns signed result to Android via promise resolution
+6. **Android** formats response and returns to calling app via Android intent
+
+**Key Architecture**: PWA is the signing device, Android handles protocol/permissions
+
+#### PWA Interface Required
+The PWA must expose this interface for Android to call:
+```javascript
+window.nostr.nip55 = async (request: NIP55Request) => {
+    // Your FROSTR signing implementation
+    return { type: request.type, result: signature };
 }
 ```
 
-### NIP-55 Flow
-1. External app sends NIP-55 intent to Android
-2. MainActivity extracts intent data and passes to PWA
-3. PWA processes request and shows user prompt
-4. User approves/denies in PWA interface
-5. PWA calls `nip55Bridge.approveRequest()` or `nip55Bridge.denyRequest()`
-6. NIP55Bridge packages result and returns to calling app
+#### NIP-55 Request Format
+Android sends requests matching your PWA's `NIP55Request` type:
+```javascript
+// sign_event example
+{ type: "sign_event", id: "...", host: "com.example.app", event: {...} }
+// get_public_key example
+{ type: "get_public_key", id: "...", host: "com.example.app" }
+// nip04_encrypt example
+{ type: "nip04_encrypt", id: "...", host: "com.example.app", plaintext: "...", pubkey: "..." }
+```
 
-### Session Persistence
-- PWA state persisted in WebView
-- Secure data stored via AndroidSecureStorage bridge
-- Activity lifecycle properly handled for background/foreground transitions
+## Performance Optimization
+
+### Modern API Implementation
+- **CameraX**: Latest Android camera framework with optimized performance
+- **OkHttp**: Modern HTTP client with connection pooling and efficient WebSocket handling
+- **Encrypted Storage**: Minimal encryption overhead with hardware acceleration
+- **Polyfill Efficiency**: Direct bridge calls with minimal JavaScript overhead
+
+### Memory Management
+- **Lifecycle Awareness**: All bridges properly handle Android lifecycle events
+- **Resource Cleanup**: Automatic cleanup of camera sessions, WebSocket connections
+- **Garbage Collection**: Efficient object lifecycle management
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### WebView Not Loading PWA
-- Check DEVELOPMENT_MODE flag in MainActivity
-- Verify development server is running on port 3000
-- Check Android emulator network connectivity
-- Review WebView console logs in Chrome DevTools
+#### Camera Not Working
+- Verify ModernCameraBridge initialization in logs
+- Check camera permissions granted
+- Ensure emulator has virtual camera support (API 36+)
+- Review CameraX provider initialization logs
 
-#### Secure Storage Failures
+#### Storage Failures
 - Verify Android Keystore availability
-- Check device security settings (lock screen required for some features)
-- Review SecureStorage logs for specific error details
+- Check EncryptedSharedPreferences initialization
+- Review SecureStorageBridge logs for encryption errors
 
-#### NIP-55 Intents Not Working
-- Verify intent filters in AndroidManifest.xml
-- Check NIP-55 URL format in calling application
-- Review MainActivity intent handling logs
-- Test with provided intent test script
+#### WebSocket Connection Issues
+- Check OkHttp WebSocket client initialization
+- Verify network connectivity
+- Review WebSocketBridge connection state logs
 
-#### Build Failures
-- Ensure Android SDK 34 is installed
-- Verify Java 8 compatibility
-- Check Gradle wrapper permissions (`chmod +x gradlew`)
-- Clear build cache: `./gradlew clean`
+#### Polyfill Injection Problems
+- Check SecureWebViewClient polyfill loading logs
+- Verify asset files exist in `app/src/main/assets/polyfills/`
+- Review JavaScript console for polyfill errors
 
 ### Logging and Diagnostics
 
-All components use Android Log with specific tags:
-- `IglooWrapper`: MainActivity and general app lifecycle
-- `SecureStorage`: Cryptographic storage operations
-- `JavaScriptBridge`: PWA ↔ Android communication
-- `LocalWebServer`: Asset serving and HTTP operations
-- `NIP55Bridge`: NIP-55 intent processing
+All components use structured logging with specific tags:
+- `SecureIglooWrapper`: Main activity and lifecycle events
+- `ModernCameraBridge`: CameraX operations and device enumeration
+- `SecureStorageBridge`: Encrypted storage operations
+- `WebSocketBridge`: WebSocket connection management
+- `SecureWebViewClient`: Polyfill injection and asset serving
 
-### Performance Optimization
-
-#### WebView Performance
-- Hardware acceleration enabled
-- Large heap available for complex PWA operations
-- Efficient JavaScript bridge with minimal data serialization
-
-#### Storage Performance
-- Secure operations cached where appropriate
-- Minimal encryption overhead with AES-GCM
-- SharedPreferences backend optimized for small data
-
-#### Network Performance
-- Local asset serving eliminates network latency
-- Development mode supports hot reload for faster iteration
-- Efficient asset compression in production builds
-
-## Extension and Customization
-
-### Adding New Bridge Methods
-1. Add method to appropriate bridge class with `@JavascriptInterface`
-2. Update TypeScript definitions in PWA `src/types.ts`
-3. Test bridge method from PWA JavaScript console
-
-### Modifying Security Settings
-- Key generation parameters in SecureStorage constructor
-- WebView security settings in MainActivity WebView configuration
-- Intent filter priorities and schemes in AndroidManifest.xml
-
-### Build Customization
-- Gradle build configuration in `app/build.gradle`
-- ProGuard rules for release builds
-- Custom asset processing and copying automation
-
-This Android wrapper provides a robust foundation for running the Igloo PWA as a native Android application with full NIP-55 support and secure storage capabilities.
+This modern Android wrapper provides a secure, performant foundation for running the Igloo PWA with full web API compatibility through transparent polyfill bridges.

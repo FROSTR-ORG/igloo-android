@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { usePrompt } from '@/context/prompt.js'
 
-import type { SignEventRequest } from '@/types.js'
+import type { SignEventRequest } from '@/types/index.js'
 
 export function EventPrompt() {
   const prompt = usePrompt()

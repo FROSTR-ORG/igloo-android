@@ -6,7 +6,7 @@ import type {
   EncryptRequest,
   DecryptRequest,
   DecryptZapRequest
-} from '@/types.js'
+} from '@/types/index.js'
 
 export function ActionPrompt() {
   const prompt = usePrompt()

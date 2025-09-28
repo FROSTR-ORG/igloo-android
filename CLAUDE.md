@@ -27,9 +27,9 @@ The PWA is designed to be wrapped in an Android application shell that provides:
 The dev server runs on port 3000 and is accessible on all network interfaces for mobile testing.
 
 ### Android/Mobile Development
-- `adb logcat -s IglooWrapper:* PWA-*:*` - Monitor Android app logs for debugging
+- `adb logcat -s "SecureIglooWrapper:*" "ModernCameraBridge:*" "SecureStorageBridge:*" "WebSocketBridge:*"` - Monitor Android app logs for debugging
 - `adb logcat -c` - Clear Android logs before monitoring
-- The Android companion app provides secure storage and system integration
+- The Android companion app provides secure storage, polyfill bridges, and system integration
 - Use Chrome DevTools on desktop to debug the PWA when running in Android WebView
 
 ## Architecture Overview
@@ -94,7 +94,7 @@ Configuration can be adjusted in the node context provider.
 - CSS is handled as separate files, not CSS-in-JS
 - The app supports URL parameters for configuration (group, pubkey, share, relay URLs)
 - Network status monitoring is built-in for debugging mobile connectivity issues
-- The PWA handles NIP-55 signature requests via `nostrsigner://` URI scheme when wrapped in Android
+- The PWA handles NIP-55 signature requests via `nostrsigner:` URI scheme when wrapped in Android
 - Background FROSTR signing operations are supported through the Android bridge
 - The app includes both manual (prompt-based) and automated (background) signing modes
 
@@ -113,9 +113,12 @@ For comprehensive understanding of the codebase architecture:
 
 ### Android Wrapper Architecture
 - **`android/README.md`** - Complete Android application shell documentation including:
-  - Hybrid application architecture and integration patterns
-  - Java source code breakdown (MainActivity, SecureStorage, JavaScriptBridge)
-  - Android Keystore security implementation
+  - Modern hybrid application architecture with secure polyfill bridges
+  - Kotlin source code breakdown (SecureMainActivity, ModernCameraBridge, SecureStorageBridge, WebSocketBridge)
+  - Android Keystore security implementation with AES256-GCM encryption
+  - CameraX 1.4.0 API integration and virtual camera support
+  - OkHttp 4.12.0 WebSocket client implementation
+  - Polyfill system for transparent web API replacement
   - NIP-55 intent handling and processing
-  - Build configuration and development workflow
+  - Build configuration and development workflow (SDK 35, Gradle 8.1.4)
   - PWA ↔ Android bridge communication protocols

@@ -12,13 +12,12 @@ import type {
   SettingsData,
   StoreAPI,
   ProviderProps
-}  from '@/types.js'
+}  from '@/types/index.js'
 
-const DEFAULT_STORE : SettingsData = {
+export const DEFAULT_STORE : SettingsData = {
   group  : null,
   share  : null,
   peers  : [],
-  perms  : [],
   pubkey : null,
   relays : []
 }

@@ -144,7 +144,6 @@ start_emulator() {
     export ANDROID_EMULATOR_METRICS_DISABLE=1
     
     emulator -avd "$AVD_NAME" \
-        -no-snapshot-save -no-snapshot-load \
         -accel auto -gpu swiftshader_indirect \
         -memory 8192 -partition-size 4096 -cores 4 \
         -camera-back none -camera-front none \

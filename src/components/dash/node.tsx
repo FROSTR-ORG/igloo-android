@@ -2,6 +2,7 @@ import { useEffect, useState }       from 'react'
 import { nip19 }          from 'nostr-tools'
 import { useBifrostNode } from '@/context/node.js'
 import { useSettings }    from '@/context/settings.js'
+import { LockIcon }       from '@/components/util/icons.js'
 
 export function NodeInfoView () {
   const node     = useBifrostNode()
@@ -43,10 +44,6 @@ export function NodeInfoView () {
     }
     // Unlock the client.
     node.unlock(password)
-    // Save password to Android secure storage if available
-    if (typeof window !== 'undefined' && window.androidSessionPersistence) {
-      window.androidSessionPersistence.savePassword(password)
-    }
     // Reset the password state.
     setPassword('')
   }
@@ -55,21 +52,8 @@ export function NodeInfoView () {
     if (node.status === 'locked') {
       // First check sessionStorage
       const password = sessionStorage.getItem('igloo_session_password')
-      if (password) {
-        node.unlock(password)
-      } else if (typeof window !== 'undefined' && window.AndroidSecureStorage) {
-        // If sessionStorage is empty, check Android secure storage
-        try {
-          const storedPassword = window.AndroidSecureStorage.getSecret('igloo_session_password')
-          if (storedPassword && storedPassword !== '') {
-            // Store in sessionStorage for future use and unlock
-            sessionStorage.setItem('igloo_session_password', storedPassword)
-            node.unlock(storedPassword)
-          }
-        } catch (e) {
-          console.error('Failed to restore password from Android secure storage:', e)
-        }
-      }
+      // If the password is found, unlock the node.
+      if (password) node.unlock(password)
     }
   }, [ node.status ])
 
@@ -134,12 +118,21 @@ export function NodeInfoView () {
           </div>
         }
       </div>
-      <button 
-        className="button"
-        onClick={() => node.reset()}
-      >
-        Reset Node
-      </button>
+      <div className="node-actions">
+        <button
+          className="button"
+          onClick={() => node.reset()}
+        >
+          Reset Node
+        </button>
+        <button
+          className="button"
+          onClick={() => {/* TODO: Add lock functionality */}}
+          title="Lock Node"
+        >
+          <LockIcon />
+        </button>
+      </div>
     </div>
   )
 }

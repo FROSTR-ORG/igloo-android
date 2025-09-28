@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 
 import type { ReactElement }                       from 'react'
-import type { CacheData, CacheAPI, ProviderProps } from '@/types.js'
+import type { CacheData, CacheAPI, ProviderProps } from '@/types/index.js'
 
 const DEFAULT_CACHE : CacheData = {
   pubkey : null,

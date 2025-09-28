@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { BifrostNode }      from '@frostr/bifrost'
 import { decrypt_content }  from '@/lib/enclave.js'
 import { decode_share_pkg } from '@frostr/bifrost/encoder'
-import { Assert, convert_pubkey }   from '@frostr/bifrost/util'
+import { convert_pubkey }   from '@frostr/bifrost/util'
 import { useWebConsole }    from '@/context/console.js'
 import { useSettings }      from '@/context/settings.js'
 
@@ -18,9 +18,7 @@ import type {
   LogType,
   NodeStatus,
   SettingsData,
-} from '@/types.js'
-import { pkdf256, sha256 } from '@vbyte/micro-lib/hash'
-import { Buff } from '@vbyte/buff'
+} from '@/types/index.js'
 
 interface FullSettingsData extends SettingsData {
   group  : GroupPackage

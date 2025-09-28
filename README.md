@@ -9,7 +9,7 @@ This application is built as a PWA (progressive web app) at its core, wrapped in
 ### Features
 
 * Uses a `bifrost` node to connect to your FROSTR network (over nostr).
-* Handles NIP-55 device signature requests for the `nostrsigner://` URI scheme.
+* Handles NIP-55 device signature requests for the `nostrsigner:` URI scheme.
 * Provides both manual (prompt) and automated (background) signing modes.
 * Includes permissions management for peers and event signing.
 * QR-Code scanning for easy setup and key exchange.
