@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { usePrompt } from '@/context/prompt.js'
 
 import type {
-  GetPublicKeyRequest,
   EncryptRequest,
   DecryptRequest,
   DecryptZapRequest

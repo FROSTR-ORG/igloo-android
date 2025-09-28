@@ -2,10 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App }        from '@/components/app.js'
 
-import { ConsoleProvider }  from '@/context/console.js'
-import { NodeProvider }     from '@/context/node.js'
-import { SettingsProvider } from '@/context/settings.js'
-import { PromptProvider }   from '@/context/prompt.js'
+import { ConsoleProvider }     from '@/context/console.js'
+import { NodeProvider }        from '@/context/node.js'
+import { SettingsProvider }    from '@/context/settings.js'
+import { PermissionsProvider } from '@/context/permissions.js'
+import { PromptProvider }      from '@/context/prompt.js'
+import { DevConsole }       from '@/components/dev-console.js'
 
 import './styles/global.css'
 import './styles/layout.css'
@@ -29,13 +31,16 @@ const root = createRoot(container)
 root.render(
   <StrictMode>
     <SettingsProvider>
-      <ConsoleProvider>
-        <NodeProvider>
-          <PromptProvider>
-            <App />
-          </PromptProvider>
-        </NodeProvider>
-      </ConsoleProvider>
+      <PermissionsProvider>
+        <ConsoleProvider>
+          <NodeProvider>
+            <PromptProvider>
+              <App />
+              <DevConsole />
+            </PromptProvider>
+          </NodeProvider>
+        </ConsoleProvider>
+      </PermissionsProvider>
     </SettingsProvider>
   </StrictMode>
 )

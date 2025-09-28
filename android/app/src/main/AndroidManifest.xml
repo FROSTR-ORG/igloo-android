@@ -84,5 +84,14 @@
             android:foregroundServiceType="shortService"
             android:exported="false" />
 
+        <!-- NIP-55 Content Provider for background signing -->
+        <provider
+            android:name=".IglooContentProvider"
+            android:authorities="com.frostr.igloo.signing"
+            android:process=":native_handler"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:multiprocess="false" />
+
     </application>
 </manifest>

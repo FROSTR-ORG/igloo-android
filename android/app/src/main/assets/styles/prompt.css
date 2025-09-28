@@ -1,0 +1,220 @@
+/* prompt.css - Styles for NIP-55 signing prompts */
+
+/* Prompt Overlay */
+.prompt-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+/* Prompt Modal */
+.prompt-modal {
+  background: #1a3265;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  min-width: 500px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  margin: 20px;
+}
+
+@media (max-width: 768px) {
+  .prompt-modal {
+    min-width: 90vw;
+    max-width: 95vw;
+    margin: 10px;
+  }
+}
+
+/* Prompt Header */
+.prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.prompt-header h2 {
+  margin: 0;
+  color: #e6e6e6;
+  font-size: 1.4em;
+}
+
+.prompt-close {
+  padding: 4px 8px;
+  font-size: 18px;
+  line-height: 1;
+  min-width: auto;
+}
+
+/* Prompt Body */
+.prompt-body {
+  padding: 20px 24px;
+}
+
+.request-info {
+  margin-bottom: 20px;
+}
+
+.request-info p {
+  margin: 8px 0;
+}
+
+.request-info strong {
+  color: #4a90e2;
+}
+
+/* Request Content */
+.request-content {
+  margin: 20px 0;
+  padding: 16px;
+  background: rgba(15, 25, 45, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.request-content h4 {
+  margin: 0 0 12px;
+  color: #d8d8d8;
+  font-size: 1em;
+}
+
+.request-content pre {
+  margin: 8px 0;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.request-content p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+/* Full Content Details */
+.full-content,
+.full-tags {
+  margin-top: 12px;
+}
+
+.full-content summary,
+.full-tags summary {
+  cursor: pointer;
+  color: #4a90e2;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.full-content summary:hover,
+.full-tags summary:hover {
+  color: #6aa9f0;
+}
+
+/* Warning Notice */
+.warning-notice {
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.warning-notice p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Permission Controls */
+.permission-controls {
+  margin: 20px 0;
+  padding: 16px;
+  background: rgba(30, 45, 75, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.permission-controls .checkbox-container {
+  margin-bottom: 0;
+}
+
+.permission-controls label {
+  font-size: 14px;
+  color: #e6e6e6;
+}
+
+/* Prompt Actions */
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.prompt-actions .button {
+  min-width: 100px;
+}
+
+/* Loading State */
+.prompt-modal .button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 480px) {
+  .prompt-modal {
+    min-width: 95vw;
+    max-height: 90vh;
+  }
+
+  .prompt-header,
+  .prompt-body,
+  .prompt-actions {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .prompt-actions {
+    flex-direction: column;
+  }
+
+  .prompt-actions .button {
+    width: 100%;
+  }
+
+  .request-content pre {
+    font-size: 12px;
+    max-height: 150px;
+  }
+}
+
+/* Scrollbar Styling for Modal */
+.prompt-modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.prompt-modal::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.prompt-modal::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.prompt-modal::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}

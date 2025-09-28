@@ -15,11 +15,11 @@ import type {
 }  from '@/types/index.js'
 
 export const DEFAULT_STORE : SettingsData = {
-  group  : null,
-  share  : null,
-  peers  : [],
-  pubkey : null,
-  relays : []
+  group       : null,
+  share       : null,
+  peers       : [],
+  pubkey      : null,
+  relays      : []
 }
 
 const STORE_KEY  = 'igloo-pwa'
@@ -62,3 +62,4 @@ export const useSettings = () => {
   }
   return ctx
 }
+

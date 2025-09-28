@@ -134,11 +134,11 @@ export function useBifrost () : BifrostNodeAPI {
 
   const reset = () => {
     // Clear the node if the store is not ready.
-    if (!is_store_ready(settings.data)) clear()      
+    if (!is_store_ready(settings.data)) clear()
     // Return early if the node is not ready.
     if (client === null) return
     // Get the share from the current node.
-    const share = client.signer._share
+    const share = (client.signer as any)._share
     // Restart the node with the share.
     _start(share)
   }

@@ -29,18 +29,15 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
   const [state, setState] = useState<PromptState>(DEFAULT_STATE)
   const node = useBifrostNode()
 
-  // Handle signing bridge requests
+  // Handle manual signing prompt requests only
   useEffect(() => {
-    const handlePromptRequest = (event: CustomEvent) => {
-      const { request, autoApprove } = event.detail
-      console.log('Received signing request:', request, autoApprove ? '(auto-approve)' : '')
+    const handlePromptRequest = (event: Event) => {
+      const customEvent = event as CustomEvent<any>
+      const { request } = customEvent.detail
+      console.log('Received manual signing request:', request)
 
-      if (autoApprove) {
-        // Auto-approve without showing prompt
-        handleAutoApprove(request)
-      } else {
-        showPrompt(request)
-      }
+      // Only handle manual prompts - auto-approval is handled in signer.ts
+      showPrompt(request)
     }
 
     window.addEventListener('nip55-prompt-request', handlePromptRequest)
@@ -49,49 +46,6 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
     }
   }, [])
 
-  /**
-   * Handle auto-approved requests without showing prompt
-   */
-  const handleAutoApprove = async (request: NIP55Request): Promise<void> => {
-    console.log('Auto-approving request:', request.type, 'from', request.host)
-
-    if (node.status === 'online' && node.client) {
-      try {
-        const signer = new BifrostSignDevice(node.client)
-        const result = await executeSigningOperation(signer, request)
-
-        // Dispatch success events
-        window.dispatchEvent(new CustomEvent('nip55-signing-result', {
-          detail: { requestId: request.id, success: true, result }
-        }))
-        window.dispatchEvent(new CustomEvent('nip55-prompt-response', {
-          detail: { requestId: request.id, approved: true, result }
-        }))
-
-        console.log('Auto-approval completed successfully')
-      } catch (error) {
-        console.error('Auto-approval failed:', error)
-
-        // Dispatch error events
-        window.dispatchEvent(new CustomEvent('nip55-signing-result', {
-          detail: { requestId: request.id, success: false, error: String(error) }
-        }))
-        window.dispatchEvent(new CustomEvent('nip55-prompt-response', {
-          detail: { requestId: request.id, approved: false }
-        }))
-      }
-    } else {
-      console.error('Node not available for auto-approval')
-
-      // Dispatch node unavailable error
-      window.dispatchEvent(new CustomEvent('nip55-signing-result', {
-        detail: { requestId: request.id, success: false, error: 'Node not available' }
-      }))
-      window.dispatchEvent(new CustomEvent('nip55-prompt-response', {
-        detail: { requestId: request.id, approved: false }
-      }))
-    }
-  }
 
   /**
    * Execute the appropriate signing operation based on request type
@@ -113,7 +67,7 @@ export const PromptProvider = ({ children }: ProviderProps): ReactElement => {
       case 'decrypt_zap_event':
         throw new Error('decrypt_zap_event not implemented')
       default:
-        throw new Error(`Unknown request type: ${request.type}`)
+        throw new Error(`Unknown request type: ${(request as any).type}`)
     }
   }
 

@@ -4,6 +4,8 @@ import type {
   SharePackage
 } from '@frostr/bifrost'
 
+import type { Permission } from './prompt.js'
+
 export interface RelayPolicy {
   url   : string
   read  : boolean
@@ -16,11 +18,11 @@ export interface CacheData {
 }
 
 export interface SettingsData {
-  group  : GroupPackage | null
-  share  : string       | null
-  peers  : PeerConfig[]
-  pubkey : string       | null
-  relays : RelayPolicy[]
+  group       : GroupPackage | null
+  share       : string       | null
+  peers       : PeerConfig[]
+  pubkey      : string       | null
+  relays      : RelayPolicy[]
 }
 
 export interface CacheAPI<T> {

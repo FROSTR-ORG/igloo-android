@@ -1,6 +1,5 @@
-import { BifrostNode } from '@frostr/bifrost'
-import { BifrostSignDevice } from '@/class/signer.js'
-import { checkPermission } from '@/lib/permissions.js'
+import { BifrostNode }                from '@frostr/bifrost'
+import { BifrostSignDevice }         from '@/class/signer.js'
 
 import type {
   NIP55Request,
@@ -9,61 +8,79 @@ import type {
 } from '@/types/index.js'
 
 /**
- * Check permission using stored permission rules
+ * Check automatic permission reading directly from secure storage
  */
-function checkBasicPermission(request: NIP55Request): 'approved' | 'prompt_required' | 'denied' {
-  const permissionStatus = checkPermission(request)
+async function check_permission(request: NIP55Request): Promise<'allowed' | 'prompt_required' | 'denied'> {
+  try {
+    // Read permissions directly from secure storage (no window global needed)
+    const stored_permissions_json = localStorage.getItem('nip55_permissions')
+    const stored_permissions = stored_permissions_json ? JSON.parse(stored_permissions_json) : []
 
-  // Map the permission result to the expected return type
-  switch (permissionStatus) {
-    case 'allowed':
-      return 'approved'
-    case 'denied':
-      return 'denied'
-    case 'prompt_required':
-    default:
-      return 'prompt_required'
+    // Check if permission exists for this app + operation
+    const permission = stored_permissions.find((p: any) =>
+      p.appId === request.host && p.type === request.type
+    )
+
+    if (permission) {
+      if (permission.allowed) {
+        console.log(`Permission found: ${request.host}:${request.type} = allowed`)
+        return 'allowed'
+      } else {
+        console.log(`Permission found: ${request.host}:${request.type} = denied`)
+        return 'denied'
+      }
+    }
+
+    // No permission found - prompt required
+    console.log(`No permission found for ${request.host}:${request.type}`)
+    return 'prompt_required'
+
+  } catch (error) {
+    console.error('Failed to check permission:', error)
+    return 'prompt_required'
   }
 }
 
 /**
  * Prompt user for signing approval and execute the operation
  */
-async function promptUserForSigning(request: NIP55Request): Promise<{ approved: boolean, result?: string }> {
+async function prompt_user_for_signing(request: NIP55Request): Promise<{ approved: boolean, result?: string }> {
   console.log('Prompting user for signing approval:', request.type)
 
   return new Promise((resolve) => {
-    let signingResult: any = null
+    let signing_result: any = null
 
     // Listen for signing result from prompt context
-    const signingResultHandler = (event: CustomEvent) => {
-      if (event.detail.requestId === request.id) {
-        signingResult = event.detail
+    const signing_result_handler = (event: Event) => {
+      const customEvent = event as CustomEvent<any>
+      if (customEvent.detail.requestId === request.id) {
+        signing_result = customEvent.detail
       }
     }
 
     // Listen for user approval/denial
-    const promptResponseHandler = (event: CustomEvent) => {
-      if (event.detail.requestId === request.id) {
+    const prompt_response_handler = (event: Event) => {
+      const customEvent = event as CustomEvent<any>
+      if (customEvent.detail.requestId === request.id) {
         // Clean up event listeners
-        window.removeEventListener('nip55-signing-result', signingResultHandler)
-        window.removeEventListener('nip55-prompt-response', promptResponseHandler)
+        window.removeEventListener('nip55-signing-result', signing_result_handler)
+        window.removeEventListener('nip55-prompt-response', prompt_response_handler)
 
-        const approved = event.detail.approved
-        if (approved && signingResult?.success) {
-          resolve({ approved: true, result: signingResult.result })
+        const approved = customEvent.detail.approved
+        if (approved && signing_result?.success) {
+          resolve({ approved: true, result: signing_result.result })
         } else {
           resolve({
-            approved: false,
-            result: signingResult?.error || 'User denied or signing failed'
+            approved  : false,
+            result    : signing_result?.error || 'User denied or signing failed'
           })
         }
       }
     }
 
     // Set up event listeners
-    window.addEventListener('nip55-signing-result', signingResultHandler)
-    window.addEventListener('nip55-prompt-response', promptResponseHandler)
+    window.addEventListener('nip55-signing-result', signing_result_handler)
+    window.addEventListener('nip55-prompt-response', prompt_response_handler)
 
     // Trigger the prompt
     window.dispatchEvent(new CustomEvent('nip55-prompt-request', {
@@ -72,20 +89,92 @@ async function promptUserForSigning(request: NIP55Request): Promise<{ approved: 
 
     // Timeout after 5 minutes
     setTimeout(() => {
-      window.removeEventListener('nip55-signing-result', signingResultHandler)
-      window.removeEventListener('nip55-prompt-response', promptResponseHandler)
+      window.removeEventListener('nip55-signing-result', signing_result_handler)
+      window.removeEventListener('nip55-prompt-response', prompt_response_handler)
       resolve({ approved: false, result: 'Request timeout' })
-    }, 300000)
+    }, 300_000)
   })
 }
 
 /**
- * Create the main NIP-55 signing bridge function
+ * Execute signing operation directly with the BifrostSignDevice
  */
-export function createSigningBridge(node: BifrostNode): NIP55WindowAPI {
+async function execute_signing_operation(signer: BifrostSignDevice, request: NIP55Request): Promise<any> {
+  switch (request.type) {
+    case 'get_public_key':
+      return signer.get_pubkey()
+    case 'sign_event':
+      return await signer.sign_event(request.event)
+    case 'nip04_encrypt':
+      return await signer.nip04_encrypt(request.pubkey, request.plaintext)
+    case 'nip04_decrypt':
+      return await signer.nip04_decrypt(request.pubkey, request.ciphertext)
+    case 'nip44_encrypt':
+      return await signer.nip44_encrypt(request.pubkey, request.plaintext)
+    case 'nip44_decrypt':
+      return await signer.nip44_decrypt(request.pubkey, request.ciphertext)
+    case 'decrypt_zap_event':
+      throw new Error('decrypt_zap_event not implemented')
+    default:
+      throw new Error(`Unknown request type: ${(request as any).type}`)
+  }
+}
+
+/**
+ * Execute automatic signing operation for Content Resolver requests
+ * Directly handles signing without React component dependency
+ */
+async function execute_automatic_signing(request: NIP55Request): Promise<NIP55Result> {
+  console.log('CLAUDE NEW AUTO-SIGNING FUNCTION CALLED:', request.type, 'from', request.host)
+
+  try {
+    // Check if bridge is ready and node client is available
+    if (!(window as any).NIP55_BRIDGE_READY) {
+      throw new Error('NIP-55 bridge not ready')
+    }
+
+    const nodeClient = (window as any).NIP55_NODE_CLIENT
+    if (!nodeClient) {
+      throw new Error('Node client not available')
+    }
+
+    // Create signer directly with node client
+    const signer = new BifrostSignDevice(nodeClient)
+
+    // Execute signing operation directly
+    const result = await execute_signing_operation(signer, request)
+
+    console.log('Auto-signing completed successfully')
+
+    return {
+      ok     : true,
+      type   : request.type,
+      id     : request.id,
+      result : result || ''
+    }
+
+  } catch (error) {
+    console.error('Auto-signing failed:', error)
+
+    return {
+      ok     : false,
+      type   : request.type,
+      id     : request.id,
+      reason : error instanceof Error ? error.message : 'Unknown signing error'
+    }
+  }
+}
+
+/**
+ * Create the main NIP-55 signing bridge function with automatic permission support
+ */
+export function create_signing_bridge(): NIP55WindowAPI {
   return async (request: NIP55Request): Promise<NIP55Result> => {
+    const start_time = Date.now()
     console.log('NIP-55 signing request:', request.type, request.id)
-    console.log('Full NIP55Request object:', JSON.stringify(request, null, 2))
+
+    // Log request type for debugging
+    console.log('NIP-55 request received')
 
     try {
       // Basic input validation
@@ -93,104 +182,69 @@ export function createSigningBridge(node: BifrostNode): NIP55WindowAPI {
         throw new Error('Invalid request: missing id or type')
       }
 
-      // Check basic permissions
-      const permissionStatus = checkBasicPermission(request)
+      // Check if permission exists
+      const permission_status = await check_permission(request)
 
-      if (permissionStatus === 'denied') {
+      // Handle denied permissions
+      if (permission_status === 'denied') {
+        console.log(`Permission denied for ${request.host}:${request.type}`)
         return {
-          ok: false,
-          type: request.type,
-          id: request.id,
-          reason: 'Permission denied'
+          ok     : false,
+          type   : request.type,
+          id     : request.id,
+          reason : 'Permission denied'
         }
       }
 
-      // For any permission that requires prompt, ask the user
-      if (permissionStatus === 'prompt_required') {
-        const userResponse = await promptUserForSigning(request)
+      // Handle allowed permissions - auto-sign
+      if (permission_status === 'allowed') {
+        console.log(`Permission allowed for ${request.host}:${request.type} - auto-signing`)
+        const result = await execute_automatic_signing(request)
 
-        if (!userResponse.approved) {
+        const duration = Date.now() - start_time
+        console.log(`Auto-signing completed in ${duration}ms`)
+
+        return result
+      }
+
+      // Handle no permission - prompt required
+      if (permission_status === 'prompt_required') {
+        console.log(`Prompting user for ${request.host}:${request.type}`)
+        const user_response = await prompt_user_for_signing(request)
+
+        if (!user_response.approved) {
           return {
-            ok: false,
-            type: request.type,
-            id: request.id,
-            reason: userResponse.result || 'User denied'
+            ok     : false,
+            type   : request.type,
+            id     : request.id,
+            reason : user_response.result || 'User denied'
           }
         }
 
         // User approved and signing completed successfully
         return {
-          ok: true,
-          type: request.type,
-          id: request.id,
-          result: userResponse.result || ''
+          ok     : true,
+          type   : request.type,
+          id     : request.id,
+          result : user_response.result || ''
         }
-      }
-
-      // Auto-approved - execute signing directly without user prompt
-      if (permissionStatus === 'approved') {
-        // We need access to the BifrostNode to perform signing
-        // For now, return success but we need to integrate with prompt context for actual signing
-        console.log('Auto-approving request:', request.type, 'from', request.host)
-
-        // Trigger the prompt context to handle auto-approval
-        window.dispatchEvent(new CustomEvent('nip55-prompt-request', {
-          detail: { request, autoApprove: true }
-        }))
-
-        // Return a pending result - the actual result will come from the prompt context
-        return new Promise((resolve) => {
-          const responseHandler = (event: CustomEvent) => {
-            if (event.detail.requestId === request.id) {
-              window.removeEventListener('nip55-prompt-response', responseHandler)
-              if (event.detail.approved) {
-                resolve({
-                  ok: true,
-                  type: request.type,
-                  id: request.id,
-                  result: event.detail.result || ''
-                })
-              } else {
-                resolve({
-                  ok: false,
-                  type: request.type,
-                  id: request.id,
-                  reason: 'Auto-approval failed'
-                })
-              }
-            }
-          }
-
-          window.addEventListener('nip55-prompt-response', responseHandler)
-
-          // Timeout after 10 seconds
-          setTimeout(() => {
-            window.removeEventListener('nip55-prompt-response', responseHandler)
-            resolve({
-              ok: false,
-              type: request.type,
-              id: request.id,
-              reason: 'Auto-approval timeout'
-            })
-          }, 10000)
-        })
       }
 
       // This shouldn't happen
       return {
-        ok: false,
-        type: request.type,
-        id: request.id,
-        reason: 'Unknown permission status'
+        ok     : false,
+        type   : request.type,
+        id     : request.id,
+        reason : 'Unknown permission status'
       }
 
     } catch (error) {
       console.error('Signing bridge error:', error)
       return {
-        ok: false,
-        type: request.type,
-        id: request.id,
-        reason: error instanceof Error ? error.message : 'Unknown error'
+        ok     : false,
+        type   : request.type,
+        id     : request.id,
+        reason : error instanceof Error ? error.message : 'Unknown error'
       }
     }
   }

@@ -74,120 +74,194 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Handle NIP-55 signing request from InvisibleNIP55Handler using direct PWA communication
+     * Handle NIP-55 signing request from both InvisibleNIP55Handler and ContentProvider
      */
     private fun handleNIP55Request() {
         Log.d(TAG, "=== HANDLING NIP-55 REQUEST (AsyncBridge) ===")
 
         try {
-            val requestJson = intent.getStringExtra("nip55_request")
-            val callingApp = intent.getStringExtra("calling_app") ?: "unknown"
             val replyPendingIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            val isContentResolver = intent.getBooleanExtra("is_content_resolver", false)
 
-            if (requestJson == null) {
-                Log.e(TAG, "No NIP-55 request data found in intent")
-                NIP55DebugLogger.logError("MISSING_REQUEST", Exception("No request data in intent"))
-                sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                    putExtra("error", "No request data")
-                })
-                return
-            }
-
-            Log.d(TAG, "Processing NIP-55 request from: $callingApp")
-
-            val request = try {
-                gson.fromJson(requestJson, NIP55Request::class.java)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to parse NIP-55 request JSON", e)
-                NIP55DebugLogger.logError("PARSE_REQUEST", e)
-                sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                    putExtra("error", "Invalid request format: ${e.message}")
-                })
-                return
-            }
-
-            NIP55DebugLogger.logFlowStart(request.id, callingApp, request.type)
-
-            // Initialize WebView and AsyncBridge if not already done
-            if (!::webView.isInitialized) {
-                Log.d(TAG, "Initializing WebView for NIP-55 processing")
-                initializeSecureWebView()
-                loadSecurePWA()
-            }
-
-            // Process request using AsyncBridge
-            activityScope.launch {
-                // Wait for PWA to be ready
-                var waitCount = 0
-                val maxWait = 30 // 30 seconds max wait
-                while (!isSecurePWALoaded && waitCount < maxWait) {
-                    delay(1000)
-                    waitCount++
-                    Log.d(TAG, "Waiting for PWA to load... ($waitCount/$maxWait)")
-                }
-
-                if (!isSecurePWALoaded) {
-                    Log.e(TAG, "PWA failed to load within timeout")
-                    NIP55DebugLogger.logError("PWA_LOAD_TIMEOUT", Exception("PWA not loaded after ${maxWait}s"))
-                    sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                        putExtra("error", "PWA failed to load")
-                        putExtra("id", request.id)
-                    })
-                    return@launch
-                }
-
-                // Use AsyncBridge for direct NIP-55 communication
-                try {
-                    Log.d(TAG, "Calling AsyncBridge for NIP-55 request: ${request.id}")
-
-                    // Call async bridge and await result
-                    val result = asyncBridge.callNip55Async(request.type, request.id, request.callingApp, request.params)
-
-                    Log.d(TAG, "AsyncBridge result received - success: ${result.ok}")
-
-                    // Send result back to calling app
-                    withContext(Dispatchers.Main) {
-                        if (result.ok && result.result != null) {
-                            Log.d(TAG, "Setting RESULT_OK for NIP-55 request: ${request.id}")
-                            sendReply(replyPendingIntent, RESULT_OK, Intent().apply {
-                                putExtra("result_data", result.result)
-                                putExtra("result_code", RESULT_OK)
-                            })
-                        } else {
-                            Log.d(TAG, "Setting RESULT_CANCELED for NIP-55 request: ${request.id} - ${result.reason}")
-                            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                                putExtra("error", result.reason ?: "Request failed")
-                                putExtra("result_code", RESULT_CANCELED)
-                            })
-                        }
-                        // Do NOT call finish() here - preserve MainActivity process
-                    }
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "AsyncBridge request failed", e)
-                    NIP55DebugLogger.logError("ASYNC_BRIDGE_FAILED", e)
-
-                    withContext(Dispatchers.Main) {
-                        sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                            putExtra("error", "Request failed: ${e.message}")
-                            putExtra("result_code", RESULT_CANCELED)
-                        })
-                        // Do NOT call finish() here - preserve MainActivity process
-                    }
-                }
+            if (isContentResolver) {
+                Log.d(TAG, "Processing Content Resolver request")
+                handleContentResolverRequest(replyPendingIntent)
+            } else {
+                Log.d(TAG, "Processing traditional NIP-55 request")
+                handleTraditionalNIP55Request(replyPendingIntent)
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Critical error in NIP-55 request handling", e)
             NIP55DebugLogger.logError("CRITICAL_HANDLE", e)
 
-            // Try to extract replyPendingIntent from intent if available
             val replyPendingIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
             sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
                 putExtra("error", "Critical error: ${e.message}")
                 putExtra("result_code", RESULT_CANCELED)
             })
-            // Do NOT call finish() here - preserve MainActivity process
+        }
+    }
+
+    /**
+     * Handle traditional NIP-55 request (from InvisibleNIP55Handler)
+     */
+    private fun handleTraditionalNIP55Request(replyPendingIntent: PendingIntent?) {
+        val requestJson = intent.getStringExtra("nip55_request")
+        val callingApp = intent.getStringExtra("calling_app") ?: "unknown"
+
+        if (requestJson == null) {
+            Log.e(TAG, "No NIP-55 request data found in intent")
+            NIP55DebugLogger.logError("MISSING_REQUEST", Exception("No request data in intent"))
+            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                putExtra("error", "No request data")
+            })
+            return
+        }
+
+        Log.d(TAG, "Processing traditional NIP-55 request from: $callingApp")
+
+        val request = try {
+            gson.fromJson(requestJson, NIP55Request::class.java)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse NIP-55 request JSON", e)
+            NIP55DebugLogger.logError("PARSE_REQUEST", e)
+            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                putExtra("error", "Invalid request format: ${e.message}")
+            })
+            return
+        }
+
+        processNIP55Request(request, callingApp, replyPendingIntent)
+    }
+
+    /**
+     * Handle Content Resolver NIP-55 request (structured parameters)
+     */
+    private fun handleContentResolverRequest(replyPendingIntent: PendingIntent?) {
+        val operationType = intent.getStringExtra("type")
+        val callingApp = intent.getStringExtra("calling_package") ?: "unknown"
+        val requestId = intent.getStringExtra("id") ?: java.util.UUID.randomUUID().toString()
+
+        if (operationType == null) {
+            Log.e(TAG, "No operation type found in Content Resolver request")
+            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                putExtra("error", "No operation type")
+            })
+            return
+        }
+
+        Log.d(TAG, "Processing Content Resolver request: $operationType from: $callingApp")
+
+        // Convert Content Resolver parameters to NIP55Request format
+        val params = mapOf(
+            "pubkey" to (intent.getStringExtra("pubkey") ?: ""),
+            "plaintext" to (intent.getStringExtra("plaintext") ?: ""),
+            "ciphertext" to (intent.getStringExtra("ciphertext") ?: ""),
+            "current_user" to (intent.getStringExtra("current_user") ?: "")
+        ).filterValues { it.isNotEmpty() }
+
+        val eventData = intent.getStringExtra("event")?.let { eventJson ->
+            try {
+                gson.fromJson(eventJson, Map::class.java) as? Map<String, Any>
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        val request = NIP55Request(
+            id = requestId,
+            type = operationType,
+            params = params,
+            callingApp = callingApp,
+            timestamp = System.currentTimeMillis(),
+            event = eventData
+        )
+
+        processNIP55Request(request, callingApp, replyPendingIntent)
+    }
+
+    /**
+     * Common NIP-55 request processing for both traditional and Content Resolver requests
+     */
+    private fun processNIP55Request(request: NIP55Request, callingApp: String, replyPendingIntent: PendingIntent?) {
+        NIP55DebugLogger.logFlowStart(request.id, callingApp, request.type)
+
+        // Log request type for debugging
+        val isContentResolver = intent.getBooleanExtra("is_content_resolver", false)
+        if (isContentResolver) {
+            Log.d(TAG, "Processing Content Resolver request: ${request.type}")
+        } else {
+            Log.d(TAG, "Processing traditional NIP-55 request: ${request.type}")
+        }
+
+        // Initialize WebView and AsyncBridge if not already done
+        if (!::webView.isInitialized) {
+            Log.d(TAG, "Initializing WebView for NIP-55 processing")
+            initializeSecureWebView()
+            loadSecurePWA()
+        }
+
+        // Process request using AsyncBridge
+        activityScope.launch {
+            // Wait for PWA to be ready
+            var waitCount = 0
+            val maxWait = 30 // 30 seconds max wait
+            while (!isSecurePWALoaded && waitCount < maxWait) {
+                delay(1000)
+                waitCount++
+                Log.d(TAG, "Waiting for PWA to load... ($waitCount/$maxWait)")
+            }
+
+            if (!isSecurePWALoaded) {
+                Log.e(TAG, "PWA failed to load within timeout")
+                NIP55DebugLogger.logError("PWA_LOAD_TIMEOUT", Exception("PWA not loaded after ${maxWait}s"))
+                sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                    putExtra("error", "PWA failed to load")
+                    putExtra("id", request.id)
+                })
+                return@launch
+            }
+
+            // Use AsyncBridge for direct NIP-55 communication
+            try {
+                Log.d(TAG, "Calling AsyncBridge for NIP-55 request: ${request.id}")
+
+                // Call async bridge and await result
+                val result = asyncBridge.callNip55Async(request.type, request.id, request.callingApp, request.params)
+
+                Log.d(TAG, "AsyncBridge result received - success: ${result.ok}")
+
+                // Send result back to calling app
+                withContext(Dispatchers.Main) {
+                    if (result.ok && result.result != null) {
+                        Log.d(TAG, "Setting RESULT_OK for NIP-55 request: ${request.id}")
+                        sendReply(replyPendingIntent, RESULT_OK, Intent().apply {
+                            putExtra("result_data", result.result)
+                            putExtra("result_code", RESULT_OK)
+                        })
+                    } else {
+                        Log.d(TAG, "Setting RESULT_CANCELED for NIP-55 request: ${request.id} - ${result.reason}")
+                        sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                            putExtra("error", result.reason ?: "Request failed")
+                            putExtra("result_code", RESULT_CANCELED)
+                        })
+                    }
+                    // Do NOT call finish() here - preserve MainActivity process
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "AsyncBridge request failed", e)
+                NIP55DebugLogger.logError("ASYNC_BRIDGE_FAILED", e)
+
+                withContext(Dispatchers.Main) {
+                    sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                        putExtra("error", "Request failed: ${e.message}")
+                        putExtra("result_code", RESULT_CANCELED)
+                    })
+                    // Do NOT call finish() here - preserve MainActivity process
+                }
+            }
         }
     }
 

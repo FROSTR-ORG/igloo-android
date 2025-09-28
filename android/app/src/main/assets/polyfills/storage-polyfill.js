@@ -242,13 +242,15 @@
          */
         _dispatchStorageEvent(key, oldValue, newValue) {
             try {
-                // Create storage event
+                // Create storage event without storageArea to avoid Android WebView issues
+                // The storageArea property causes "Failed to convert value to 'Storage'" errors
+                // in Android WebView when using polyfilled storage objects
                 const storageEvent = new StorageEvent('storage', {
                     key: key,
                     oldValue: oldValue,
                     newValue: newValue,
-                    url: window.location.href,
-                    storageArea: this.storageType === 'local' ? window.localStorage : window.sessionStorage
+                    url: window.location.href
+                    // storageArea omitted to prevent Android WebView conversion errors
                 });
 
                 // Dispatch on window
