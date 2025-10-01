@@ -52,15 +52,27 @@ class MainActivity : AppCompatActivity() {
     private val gson = Gson()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // IMMEDIATELY move to background if this is a service request - before any UI setup
+        val isBackgroundServiceRequest = intent.getBooleanExtra("background_service_request", false)
+        if (isBackgroundServiceRequest) {
+            Log.d(TAG, "Background service request detected - moving to background immediately")
+            moveTaskToBack(true)
+        }
+
         super.onCreate(savedInstanceState)
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onCreate ===")
         Log.d(TAG, "Process ID: ${android.os.Process.myPid()}")
+
+        if (isBackgroundServiceRequest) {
+            Log.d(TAG, "Background service request - continuing setup in background")
+        }
 
         when (intent.action) {
             "com.frostr.igloo.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED", intent, mapOf(
                     "process" to "main",
-                    "launchMode" to intent.flags.toString()
+                    "launchMode" to intent.flags.toString(),
+                    "backgroundServiceRequest" to isBackgroundServiceRequest
                 ))
                 handleNIP55Request()
             }
@@ -530,11 +542,18 @@ class MainActivity : AppCompatActivity() {
 
         setIntent(intent)
 
+        // Check if this is a background service request
+        val isBackgroundServiceRequest = intent.getBooleanExtra("background_service_request", false)
+        if (isBackgroundServiceRequest) {
+            Log.d(TAG, "Background service request detected in onNewIntent - processing in background")
+        }
+
         when (intent.action) {
             "com.frostr.igloo.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED_NEW", intent, mapOf(
                     "process" to "main",
-                    "launchMode" to intent.flags.toString()
+                    "launchMode" to intent.flags.toString(),
+                    "backgroundServiceRequest" to isBackgroundServiceRequest
                 ))
                 handleNIP55Request()
             }
@@ -634,5 +653,25 @@ class MainActivity : AppCompatActivity() {
         sendBroadcast(broadcastIntent)
 
         Log.d(TAG, "Direct broadcast sent successfully")
+
+        // If this is a background service request, also notify the background signing service
+        val isBackgroundServiceRequest = intent?.getBooleanExtra("background_service_request", false) ?: false
+        if (isBackgroundServiceRequest) {
+            Log.d(TAG, "Notifying background signing service of completion")
+
+            val serviceCompletionIntent = Intent(Nip55BackgroundSigningService.ACTION_SIGNING_COMPLETE).apply {
+                putExtra("success", resultCode == RESULT_OK)
+                putExtra("request_id", resultData.getStringExtra("id") ?: "unknown")
+                if (resultCode == RESULT_OK) {
+                    putExtra("result_data", resultData.getStringExtra("result_data"))
+                } else {
+                    putExtra("error", resultData.getStringExtra("error"))
+                }
+                setPackage(packageName)
+            }
+
+            sendBroadcast(serviceCompletionIntent)
+            Log.d(TAG, "Background signing service completion notification sent")
+        }
     }
 }

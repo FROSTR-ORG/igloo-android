@@ -1,8 +1,9 @@
 import { useEffect, useState }   from 'react'
 import { useBifrostNode }        from '@/context/node.js'
-import { create_signing_bridge } from '@/lib/signer.js'
+import { create_signing_bridge, executeAutoSigning, requestManualPrompt } from '@/lib/signer.js'
 
 import type { ReactElement } from 'react'
+import type { NIP55Bridge } from '@/types/bridge.js'
 
 /**
  * NIP-55 Bridge Component with Content Resolver Support
@@ -24,32 +25,41 @@ export function NIP55Bridge(): ReactElement | null {
         // Create the enhanced signing bridge function
         const signing_bridge = create_signing_bridge()
 
-        // Expose it on window.nostr.nip55
+        // Create clean consolidated bridge interface
+        const bridge: NIP55Bridge = {
+          ready: true,
+          nodeClient: node.client,
+          autoSign: executeAutoSigning,
+          requestManualPrompt: requestManualPrompt
+        }
+
+        // Expose clean interface on window.nostr
         if (!window.nostr) {
           window.nostr = {}
         }
         window.nostr.nip55 = signing_bridge
-
-        // Mark bridge as ready for Content Resolver operations
-        window.NIP55_BRIDGE_READY = true
-
-        // Expose node client for direct library access
-        window.NIP55_NODE_CLIENT = node.client
+        window.nostr.bridge = bridge
 
         set_bridge_ready(true)
-        console.log('NIP-55 bridge initialized')
+        console.log('NIP-55 bridge initialized with clean interface')
 
       } catch (error) {
         console.error('Failed to initialize NIP-55 bridge:', error)
         set_bridge_ready(false)
-        window.NIP55_BRIDGE_READY = false
+        // Clean up bridge on error
+        if (window.nostr?.bridge) {
+          window.nostr.bridge.ready = false
+          window.nostr.bridge.nodeClient = null
+        }
       }
     } else {
       // Clean up bridge if node goes offline
       if (window.nostr?.nip55) {
         delete window.nostr.nip55
-        window.NIP55_BRIDGE_READY = false
-        window.NIP55_NODE_CLIENT = null
+        if (window.nostr.bridge) {
+          window.nostr.bridge.ready = false
+          window.nostr.bridge.nodeClient = null
+        }
         set_bridge_ready(false)
         console.log('NIP-55 bridge cleaned up (node offline)')
       }

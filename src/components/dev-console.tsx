@@ -361,7 +361,7 @@ export function DevConsole(): ReactElement {
             <div style={{ fontSize: '11px', color: '#ccc' }}>
               NIP-55 Bridge: {(() => {
                 try {
-                  return (window as any).NIP55_BRIDGE_READY ? 'Ready ✅' : 'Not Ready ❌'
+                  return window.nostr?.bridge?.ready ? 'Ready ✅' : 'Not Ready ❌'
                 } catch {
                   return 'Unknown'
                 }

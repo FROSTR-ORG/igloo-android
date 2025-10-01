@@ -84,6 +84,12 @@
             android:foregroundServiceType="shortService"
             android:exported="false" />
 
+        <!-- Background Signing Service for Auto-Approved Requests (runs in :main process) -->
+        <service
+            android:name=".Nip55BackgroundSigningService"
+            android:foregroundServiceType="shortService"
+            android:exported="false" />
+
         <!-- NIP-55 Content Provider for background signing -->
         <provider
             android:name=".IglooContentProvider"

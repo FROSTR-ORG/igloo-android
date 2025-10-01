@@ -83,8 +83,8 @@ class AsyncBridge(private val webView: WebView) {
 
                 // Handle cancellation
                 cont.invokeOnCancellation {
-                    Log.d(TAG, "Request cancelled: $id")
-                    continuations.remove(id)
+                    Log.d(TAG, "Request cancelled: $requestId")
+                    continuations.remove(requestId)
                 }
             }
         }

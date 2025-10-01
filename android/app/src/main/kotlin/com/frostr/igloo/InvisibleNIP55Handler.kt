@@ -15,9 +15,12 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import com.frostr.igloo.debug.NIP55DebugLogger
+import com.frostr.igloo.bridges.StorageBridge
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import java.util.UUID
+
+// Permission data class is defined in IglooContentProvider.kt
 
 /**
  * Invisible NIP-55 Intent Handler
@@ -76,6 +79,31 @@ class InvisibleNIP55Handler : Activity() {
                 originalRequest.type
             )
 
+            // Check permissions upfront for unified permission checking
+            Log.d(TAG, "=== UNIFIED PERMISSION CHECKING START ===")
+            val permissionStatus = checkPermission(originalRequest)
+            Log.d(TAG, "Permission status for ${originalRequest.callingApp}:${originalRequest.type} = $permissionStatus")
+            Log.d(TAG, "=== UNIFIED PERMISSION CHECKING END ===")
+
+            when (permissionStatus) {
+                "denied" -> {
+                    // Permission denied - return error immediately
+                    Log.d(TAG, "Permission denied for ${originalRequest.callingApp}:${originalRequest.type}")
+                    returnError("Permission denied")
+                    return
+                }
+                "allowed" -> {
+                    // Permission allowed - start background signing service in :main process
+                    Log.d(TAG, "Permission allowed for ${originalRequest.callingApp}:${originalRequest.type} - starting background signing service")
+                    startBackgroundSigningService()
+                    return
+                }
+                "prompt_required" -> {
+                    // No permission - requires user prompt
+                    Log.d(TAG, "No permission found for ${originalRequest.callingApp}:${originalRequest.type} - user prompt required")
+                }
+            }
+
             // Start foreground service to keep process alive during NIP-55 operation
             val serviceIntent = Intent(this, Nip55KeepAliveService::class.java)
             startService(serviceIntent)
@@ -132,16 +160,35 @@ class InvisibleNIP55Handler : Activity() {
                 putExtra("calling_app", originalRequest.callingApp)
                 putExtra("reply_pending_intent", replyPendingIntent)
                 putExtra("reply_broadcast_action", uniqueReplyAction) // Pass broadcast action to MainActivity
+
+                // Check if this is a Content Resolver request (background) vs Intent request (manual)
+                val isContentResolver = intent.getBooleanExtra("is_content_resolver", false)
+                if (isContentResolver) {
+                    putExtra("is_content_resolver", true)
+                }
+
+                // Set appropriate flags based on permission status and request type
+                // Only bring app to foreground when user prompt is actually needed
+                val needsUserInteraction = (permissionStatus == "prompt_required")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                       Intent.FLAG_ACTIVITY_SINGLE_TOP
+                       Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                       if (needsUserInteraction) {
+                           // User interaction needed: Come to foreground
+                           0
+                       } else {
+                           // Auto-approval or denial: Stay in background
+                           Intent.FLAG_ACTIVITY_NO_USER_ACTION
+                       }
             }
 
             NIP55DebugLogger.logIntent("FORWARDING", cleanIntent, mapOf(
                 "originalFlags" to "0x${Integer.toHexString(intent.flags)}",
                 "cleanFlags" to "0x${Integer.toHexString(cleanIntent.flags)}",
                 "processIsolation" to "native_handler -> main",
-                "replyAction" to uniqueReplyAction
+                "replyAction" to uniqueReplyAction,
+                "permissionStatus" to permissionStatus,
+                "needsUserInteraction" to (permissionStatus == "prompt_required")
             ))
 
             startActivity(cleanIntent)
@@ -531,6 +578,134 @@ class InvisibleNIP55Handler : Activity() {
                 "completed" to isCompleted
             ))
         }
+    }
+
+    /**
+     * Check permission status for the request using StorageBridge
+     * Returns "allowed", "denied", or "prompt_required"
+     */
+    private fun checkPermission(request: NIP55Request): String {
+        return try {
+            val storageBridge = StorageBridge(this)
+            val permissionsJson = storageBridge.getItem("local", "nip55_permissions")
+
+            if (permissionsJson == null) {
+                Log.d(TAG, "No permissions found in storage")
+                return "prompt_required"
+            }
+
+            Log.d(TAG, "Raw permissions JSON: $permissionsJson")
+
+            val permissionListType = object : com.google.gson.reflect.TypeToken<Array<Permission>>() {}.type
+            val permissions: Array<Permission> = gson.fromJson(permissionsJson, permissionListType)
+
+            Log.d(TAG, "Parsed ${permissions.size} permissions")
+            permissions.forEach { p ->
+                Log.d(TAG, "Permission: appId='${p.appId}' type='${p.type}' allowed=${p.allowed}")
+            }
+
+            Log.d(TAG, "Looking for: appId='${request.callingApp}' type='${request.type}'")
+
+            // Find permission for this app + operation
+            val permission = permissions.find { p ->
+                p.appId == request.callingApp && p.type == request.type
+            }
+
+            if (permission != null) {
+                if (permission.allowed) {
+                    Log.d(TAG, "Permission found: ${request.callingApp}:${request.type} = allowed")
+                    "allowed"
+                } else {
+                    Log.d(TAG, "Permission found: ${request.callingApp}:${request.type} = denied")
+                    "denied"
+                }
+            } else {
+                Log.d(TAG, "No permission found for ${request.callingApp}:${request.type}")
+                "prompt_required"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to check permission", e)
+            "prompt_required"
+        }
+    }
+
+    /**
+     * Start background signing service for auto-approved requests
+     * This forwards the request to the :main process without bringing MainActivity to foreground
+     */
+    private fun startBackgroundSigningService() {
+        Log.d(TAG, "Starting background signing service for auto-approved request")
+
+        // Create PendingIntent for reply
+        val replyIntent = Intent(uniqueReplyAction).apply {
+            setPackage(packageName) // Restrict to our app for security
+        }
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            this,
+            0,
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Create intent to start the background signing service in :main process
+        val serviceIntent = Intent(this, Nip55BackgroundSigningService::class.java).apply {
+            putExtra(Nip55BackgroundSigningService.EXTRA_NIP55_REQUEST, gson.toJson(originalRequest))
+            putExtra(Nip55BackgroundSigningService.EXTRA_CALLING_APP, originalRequest.callingApp)
+            putExtra(Nip55BackgroundSigningService.EXTRA_REPLY_PENDING_INTENT, replyPendingIntent)
+            putExtra(Nip55BackgroundSigningService.EXTRA_REPLY_BROADCAST_ACTION, uniqueReplyAction)
+        }
+
+        // Register receiver for completion notification from the service
+        val filter = IntentFilter(Nip55BackgroundSigningService.ACTION_SIGNING_COMPLETE)
+        replyReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                Log.d(TAG, "Received signing completion from background service")
+                isCompleted = true
+                timeoutHandler.removeCallbacksAndMessages(null)
+
+                val success = intent?.getBooleanExtra("success", false) ?: false
+                val resultData = intent?.getStringExtra("result_data")
+                val error = intent?.getStringExtra("error")
+
+                if (success && resultData != null) {
+                    Log.d(TAG, "Background signing completed successfully")
+                    returnResult(resultData)
+                } else {
+                    Log.d(TAG, "Background signing failed: $error")
+                    returnError(error ?: "Background signing failed")
+                }
+
+                cleanupAndFinish()
+            }
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(replyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(replyReceiver, filter)
+        }
+
+        Log.d(TAG, "Registered receiver for background signing completion")
+
+        // Start the background signing service
+        try {
+            startForegroundService(serviceIntent)
+            Log.d(TAG, "Successfully started background signing service")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start background signing service", e)
+            returnError("Failed to start background signing service: ${e.message}")
+            cleanupAndFinish()
+            return
+        }
+
+        // Set up timeout handler for the background service
+        timeoutHandler.postDelayed({
+            if (!isCompleted) {
+                Log.e(TAG, "Background signing service timed out after ${REQUEST_TIMEOUT_MS}ms")
+                returnError("Request timeout")
+                cleanupAndFinish()
+            }
+        }, REQUEST_TIMEOUT_MS)
     }
 
     /**

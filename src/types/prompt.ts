@@ -9,7 +9,6 @@ export interface PromptState {
   request       : NIP55Request | null
   status        : PromptStatus
   remember      : boolean
-  pendingRequest: NIP55Request | null  // Request waiting for user to login
 }
 
 export interface PromptAPI {
@@ -18,8 +17,6 @@ export interface PromptAPI {
   approve       : (remember?: boolean) => Promise<any>
   deny          : (remember?: boolean) => Promise<void>
   dismiss       : () => void
-  showPending   : () => void  // Show the pending request after login
-  clearPending  : () => void  // Clear pending request
 }
 
 // Unified Permission format (matches ContentProvider format)

@@ -41,65 +41,11 @@ async function check_permission(request: NIP55Request): Promise<'allowed' | 'pro
   }
 }
 
-/**
- * Prompt user for signing approval and execute the operation
- */
-async function prompt_user_for_signing(request: NIP55Request): Promise<{ approved: boolean, result?: string }> {
-  console.log('Prompting user for signing approval:', request.type)
-
-  return new Promise((resolve) => {
-    let signing_result: any = null
-
-    // Listen for signing result from prompt context
-    const signing_result_handler = (event: Event) => {
-      const customEvent = event as CustomEvent<any>
-      if (customEvent.detail.requestId === request.id) {
-        signing_result = customEvent.detail
-      }
-    }
-
-    // Listen for user approval/denial
-    const prompt_response_handler = (event: Event) => {
-      const customEvent = event as CustomEvent<any>
-      if (customEvent.detail.requestId === request.id) {
-        // Clean up event listeners
-        window.removeEventListener('nip55-signing-result', signing_result_handler)
-        window.removeEventListener('nip55-prompt-response', prompt_response_handler)
-
-        const approved = customEvent.detail.approved
-        if (approved && signing_result?.success) {
-          resolve({ approved: true, result: signing_result.result })
-        } else {
-          resolve({
-            approved  : false,
-            result    : signing_result?.error || 'User denied or signing failed'
-          })
-        }
-      }
-    }
-
-    // Set up event listeners
-    window.addEventListener('nip55-signing-result', signing_result_handler)
-    window.addEventListener('nip55-prompt-response', prompt_response_handler)
-
-    // Trigger the prompt
-    window.dispatchEvent(new CustomEvent('nip55-prompt-request', {
-      detail: { request }
-    }))
-
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      window.removeEventListener('nip55-signing-result', signing_result_handler)
-      window.removeEventListener('nip55-prompt-response', prompt_response_handler)
-      resolve({ approved: false, result: 'Request timeout' })
-    }, 300_000)
-  })
-}
 
 /**
  * Execute signing operation directly with the BifrostSignDevice
  */
-async function execute_signing_operation(signer: BifrostSignDevice, request: NIP55Request): Promise<any> {
+export async function executeSigningOperation(signer: BifrostSignDevice, request: NIP55Request): Promise<any> {
   switch (request.type) {
     case 'get_public_key':
       return signer.get_pubkey()
@@ -122,47 +68,77 @@ async function execute_signing_operation(signer: BifrostSignDevice, request: NIP
 
 /**
  * Execute automatic signing operation for Content Resolver requests
- * Directly handles signing without React component dependency
+ * Clean implementation using bridge interface
  */
-async function execute_automatic_signing(request: NIP55Request): Promise<NIP55Result> {
-  console.log('CLAUDE NEW AUTO-SIGNING FUNCTION CALLED:', request.type, 'from', request.host)
+export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Result> {
+  console.log('Auto-signing request:', request.type, 'from', request.host)
 
   try {
-    // Check if bridge is ready and node client is available
-    if (!(window as any).NIP55_BRIDGE_READY) {
+    // Check bridge availability
+    if (!window.nostr?.bridge?.ready) {
       throw new Error('NIP-55 bridge not ready')
     }
 
-    const nodeClient = (window as any).NIP55_NODE_CLIENT
+    const nodeClient = window.nostr.bridge.nodeClient
     if (!nodeClient) {
       throw new Error('Node client not available')
     }
 
-    // Create signer directly with node client
+    // Create signer and execute operation
     const signer = new BifrostSignDevice(nodeClient)
-
-    // Execute signing operation directly
-    const result = await execute_signing_operation(signer, request)
+    const result = await executeSigningOperation(signer, request)
 
     console.log('Auto-signing completed successfully')
 
     return {
-      ok     : true,
-      type   : request.type,
-      id     : request.id,
-      result : result || ''
+      ok: true,
+      type: request.type,
+      id: request.id,
+      result: result || ''
     }
 
   } catch (error) {
     console.error('Auto-signing failed:', error)
 
     return {
-      ok     : false,
-      type   : request.type,
-      id     : request.id,
-      reason : error instanceof Error ? error.message : 'Unknown signing error'
+      ok: false,
+      type: request.type,
+      id: request.id,
+      reason: error instanceof Error ? error.message : 'Unknown signing error'
     }
   }
+}
+
+/**
+ * Global callback for manual prompt - set by React PromptProvider
+ */
+let promptCallback: ((request: NIP55Request) => Promise<NIP55Result>) | null = null
+
+/**
+ * Set the manual prompt callback (called by React PromptProvider)
+ */
+export function setManualPromptCallback(callback: (request: NIP55Request) => Promise<NIP55Result>) {
+  promptCallback = callback
+}
+
+/**
+ * Request manual user prompt for signing
+ * Clean implementation that connects to React prompt context
+ */
+export async function requestManualPrompt(request: NIP55Request): Promise<NIP55Result> {
+  console.log('Manual prompt request:', request.type, 'from', request.host)
+
+  if (!promptCallback) {
+    console.error('Manual prompt callback not set - PromptProvider not initialized')
+    return {
+      ok: false,
+      type: request.type,
+      id: request.id,
+      reason: 'Prompt system not available'
+    }
+  }
+
+  return await promptCallback(request)
 }
 
 /**
@@ -199,7 +175,7 @@ export function create_signing_bridge(): NIP55WindowAPI {
       // Handle allowed permissions - auto-sign
       if (permission_status === 'allowed') {
         console.log(`Permission allowed for ${request.host}:${request.type} - auto-signing`)
-        const result = await execute_automatic_signing(request)
+        const result = await executeAutoSigning(request)
 
         const duration = Date.now() - start_time
         console.log(`Auto-signing completed in ${duration}ms`)
@@ -210,24 +186,7 @@ export function create_signing_bridge(): NIP55WindowAPI {
       // Handle no permission - prompt required
       if (permission_status === 'prompt_required') {
         console.log(`Prompting user for ${request.host}:${request.type}`)
-        const user_response = await prompt_user_for_signing(request)
-
-        if (!user_response.approved) {
-          return {
-            ok     : false,
-            type   : request.type,
-            id     : request.id,
-            reason : user_response.result || 'User denied'
-          }
-        }
-
-        // User approved and signing completed successfully
-        return {
-          ok     : true,
-          type   : request.type,
-          id     : request.id,
-          result : user_response.result || ''
-        }
+        return await requestManualPrompt(request)
       }
 
       // This shouldn't happen
