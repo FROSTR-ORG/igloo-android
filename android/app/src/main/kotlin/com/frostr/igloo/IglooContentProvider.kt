@@ -43,7 +43,6 @@ class IglooContentProvider : ContentProvider() {
 
     companion object {
         private const val TAG = "IglooContentProvider"
-        private const val AUTHORITY = "com.frostr.igloo.signing"
         private const val TIMEOUT_MS = 30000L
         private const val MAX_QUERIES_PER_HOUR = 100
 
@@ -54,18 +53,13 @@ class IglooContentProvider : ContentProvider() {
             "NIP44_ENCRYPT", "NIP44_DECRYPT",
             "DECRYPT_ZAP_EVENT"
         )
-
-        // URI matcher for operation types
-        private val uriMatcher = UriMatcher(UriMatcher.NO_MATCH).apply {
-            addURI(AUTHORITY, "GET_PUBLIC_KEY", 1)
-            addURI(AUTHORITY, "SIGN_EVENT", 2)
-            addURI(AUTHORITY, "NIP04_ENCRYPT", 3)
-            addURI(AUTHORITY, "NIP04_DECRYPT", 4)
-            addURI(AUTHORITY, "NIP44_ENCRYPT", 5)
-            addURI(AUTHORITY, "NIP44_DECRYPT", 6)
-            addURI(AUTHORITY, "DECRYPT_ZAP_EVENT", 7)
-        }
     }
+
+    // Authority is set dynamically from context
+    private lateinit var authority: String
+
+    // URI matcher initialized in onCreate
+    private lateinit var uriMatcher: UriMatcher
 
     // Query-specific state management for concurrent operations
     data class QueryState(
@@ -86,7 +80,21 @@ class IglooContentProvider : ContentProvider() {
     private val gson = Gson()
 
     override fun onCreate(): Boolean {
-        Log.i(TAG, "NIP-55 Content Provider initialized in :native_handler process")
+        // Initialize authority from context
+        authority = "${context?.packageName}.signing"
+
+        // Initialize URI matcher with dynamic authority
+        uriMatcher = UriMatcher(UriMatcher.NO_MATCH).apply {
+            addURI(authority, "GET_PUBLIC_KEY", 1)
+            addURI(authority, "SIGN_EVENT", 2)
+            addURI(authority, "NIP04_ENCRYPT", 3)
+            addURI(authority, "NIP04_DECRYPT", 4)
+            addURI(authority, "NIP44_ENCRYPT", 5)
+            addURI(authority, "NIP44_DECRYPT", 6)
+            addURI(authority, "DECRYPT_ZAP_EVENT", 7)
+        }
+
+        Log.i(TAG, "NIP-55 Content Provider initialized with authority: $authority")
         return true
     }
 

@@ -6,7 +6,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
 
     <application
@@ -23,22 +26,15 @@
         android:hardwareAccelerated="true"
         tools:targetApi="31">
 
-        <!-- Main Activity - runs in main process with PWA and WebView -->
+        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleInstancePerTask"
+            android:launchMode="standard"
+            android:taskAffinity=""
             android:alwaysRetainTaskState="true"
             android:excludeFromRecents="false"
-            android:finishOnTaskLaunch="false"
-            android:clearTaskOnLaunch="false"
-            android:stateNotNeeded="false"
-            android:noHistory="false"
-            android:allowTaskReparenting="false"
-            android:taskAffinity="com.frostr.igloo.MAIN"
-            android:process=":main"
             android:documentLaunchMode="intoExisting"
-            android:relinquishTaskIdentity="false"
             android:lockTaskMode="if_whitelisted">
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.MAIN" />
@@ -55,16 +51,13 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- Invisible NIP-55 Handler - lightweight intent handler in separate process -->
+        <!-- Invisible NIP-55 Handler - thin routing layer -->
         <activity
             android:name=".InvisibleNIP55Handler"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:taskAffinity="com.frostr.igloo.HANDLER"
-            android:process=":native_handler"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
-            android:finishOnTaskLaunch="true"
             android:stateNotNeeded="true">
 
             <!-- Handle nostrsigner: URLs -->
@@ -77,24 +70,16 @@
 
         </activity>
 
-        <!-- Keep-Alive Service for NIP-55 Handler Process -->
+        <!-- Hybrid Background Service - WebSocket + On-Demand PWA -->
         <service
-            android:name=".Nip55KeepAliveService"
-            android:process=":native_handler"
-            android:foregroundServiceType="shortService"
-            android:exported="false" />
-
-        <!-- Background Signing Service for Auto-Approved Requests (runs in :main process) -->
-        <service
-            android:name=".Nip55BackgroundSigningService"
-            android:foregroundServiceType="shortService"
+            android:name=".IglooBackgroundService"
+            android:foregroundServiceType="dataSync"
             android:exported="false" />
 
         <!-- NIP-55 Content Provider for background signing -->
         <provider
             android:name=".IglooContentProvider"
-            android:authorities="com.frostr.igloo.signing"
-            android:process=":native_handler"
+            android:authorities="${applicationId}.signing"
             android:exported="true"
             android:grantUriPermissions="false"
             android:multiprocess="false" />

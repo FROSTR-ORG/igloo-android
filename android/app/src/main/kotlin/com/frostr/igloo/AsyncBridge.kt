@@ -16,17 +16,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * NIP-55 result data structure
- */
-data class NIP55Result(
-    val ok: Boolean,
-    val type: String,
-    val id: String,
-    val result: String?,
-    val reason: String?
-)
-
-/**
  * Modern Async Bridge for NIP-55 Communication
  *
  * Uses androidx.webkit.WebMessageListener for secure, efficient communication
@@ -41,7 +30,7 @@ class AsyncBridge(private val webView: WebView) {
     }
 
     // Thread-safe map to track pending requests
-    private val continuations: MutableMap<String, CancellableContinuation<NIP55Result>> = ConcurrentHashMap()
+    private val continuations: MutableMap<String, CancellableContinuation<com.frostr.igloo.NIP55Result>> = ConcurrentHashMap()
 
     /**
      * Initialize the async bridge with WebMessageListener
@@ -66,7 +55,7 @@ class AsyncBridge(private val webView: WebView) {
     /**
      * Call NIP-55 async method and await result
      */
-    suspend fun callNip55Async(type: String, id: String, host: String, params: Map<String, Any>? = null, timeoutMs: Long = DEFAULT_TIMEOUT_MS): NIP55Result {
+    suspend fun callNip55Async(type: String, id: String, host: String, params: Map<String, Any>? = null, timeoutMs: Long = DEFAULT_TIMEOUT_MS): com.frostr.igloo.NIP55Result {
         Log.d(TAG, "Calling NIP-55 async: $type ($id)")
 
         return withTimeout(timeoutMs) {
@@ -78,8 +67,18 @@ class AsyncBridge(private val webView: WebView) {
                 val requestJson = buildRequestJson(id, type, host, params)
                 val script = buildJavaScript(requestId, requestJson)
 
-                // Execute the script
-                webView.evaluateJavascript(script, null)
+                // Execute the script on Main thread (WebView requires this)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        webView.evaluateJavascript(script, null)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to execute JavaScript", e)
+                        val errorCont = continuations.remove(requestId)
+                        if (errorCont?.isActive == true) {
+                            errorCont.resumeWithException(e)
+                        }
+                    }
+                }
 
                 // Handle cancellation
                 cont.invokeOnCancellation {
@@ -126,7 +125,7 @@ class AsyncBridge(private val webView: WebView) {
                     Log.d(TAG, "Request completed successfully: $id")
                     // Parse the result as a NIP55Result object
                     val resultJson = JSONObject(resultValue)
-                    val nip55Result = NIP55Result(
+                    val nip55Result = com.frostr.igloo.NIP55Result(
                         ok = resultJson.optBoolean("ok", true),
                         type = resultJson.optString("type", "result"),
                         id = resultJson.optString("id", id),
@@ -138,7 +137,7 @@ class AsyncBridge(private val webView: WebView) {
                 "error" -> {
                     val errorValue = json.getString("value")
                     Log.w(TAG, "Request failed: $id - $errorValue")
-                    val errorResult = NIP55Result(
+                    val errorResult = com.frostr.igloo.NIP55Result(
                         ok = false,
                         type = "error",
                         id = id,

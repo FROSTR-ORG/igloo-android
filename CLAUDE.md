@@ -31,6 +31,7 @@ The dev server runs on port 3000 and is accessible on all network interfaces for
 - `adb logcat -c` - Clear Android logs before monitoring
 - The Android companion app provides secure storage, polyfill bridges, and system integration
 - Use Chrome DevTools on desktop to debug the PWA when running in Android WebView
+- **IMPORTANT**: When updating/reinstalling the app, use `adb install -r` to preserve app data. DO NOT run `adb shell pm clear` unless explicitly testing first-run scenarios or resetting permissions intentionally.
 
 ## Architecture Overview
 

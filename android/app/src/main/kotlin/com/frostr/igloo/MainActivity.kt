@@ -67,6 +67,9 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Background service request - continuing setup in background")
         }
 
+        // Start IglooBackgroundService on app launch
+        startIglooBackgroundService()
+
         when (intent.action) {
             "com.frostr.igloo.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED", intent, mapOf(
@@ -82,6 +85,20 @@ class MainActivity : AppCompatActivity() {
                 loadSecurePWA()
                 handleIntent(intent)
             }
+        }
+    }
+
+    /**
+     * Start IglooBackgroundService
+     * This service manages WebSocket connections and handles NIP-55 requests
+     */
+    private fun startIglooBackgroundService() {
+        try {
+            val serviceIntent = Intent(this, IglooBackgroundService::class.java)
+            startForegroundService(serviceIntent)
+            Log.d(TAG, "✓ Started IglooBackgroundService")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start IglooBackgroundService", e)
         }
     }
 
@@ -119,32 +136,60 @@ class MainActivity : AppCompatActivity() {
      * Handle traditional NIP-55 request (from InvisibleNIP55Handler)
      */
     private fun handleTraditionalNIP55Request(replyPendingIntent: PendingIntent?) {
-        val requestJson = intent.getStringExtra("nip55_request")
-        val callingApp = intent.getStringExtra("calling_app") ?: "unknown"
+        // Check for new format (individual extras from invisible handler)
+        val requestId = intent.getStringExtra("nip55_request_id")
+        val requestType = intent.getStringExtra("nip55_request_type")
+        val showPrompt = intent.getBooleanExtra("nip55_show_prompt", false)
 
-        if (requestJson == null) {
-            Log.e(TAG, "No NIP-55 request data found in intent")
-            NIP55DebugLogger.logError("MISSING_REQUEST", Exception("No request data in intent"))
-            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                putExtra("error", "No request data")
-            })
-            return
+        val request = if (requestId != null && requestType != null) {
+            // New format from invisible handler
+            val callingApp = intent.getStringExtra("nip55_request_calling_app") ?: "unknown"
+            val paramsJson = intent.getStringExtra("nip55_request_params") ?: "{}"
+
+            val params = try {
+                gson.fromJson(paramsJson, Map::class.java) as? Map<String, String> ?: emptyMap()
+            } catch (e: Exception) {
+                emptyMap()
+            }
+
+            Log.d(TAG, "Processing NIP-55 prompt request from: $callingApp (show_prompt=$showPrompt)")
+
+            NIP55Request(
+                id = requestId,
+                type = requestType,
+                params = params,
+                callingApp = callingApp,
+                timestamp = System.currentTimeMillis()
+            )
+        } else {
+            // Legacy format (JSON string)
+            val requestJson = intent.getStringExtra("nip55_request")
+            val callingApp = intent.getStringExtra("calling_app") ?: "unknown"
+
+            if (requestJson == null) {
+                Log.e(TAG, "No NIP-55 request data found in intent")
+                NIP55DebugLogger.logError("MISSING_REQUEST", Exception("No request data in intent"))
+                sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                    putExtra("error", "No request data")
+                })
+                return
+            }
+
+            Log.d(TAG, "Processing traditional NIP-55 request from: $callingApp")
+
+            try {
+                gson.fromJson(requestJson, NIP55Request::class.java)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse NIP-55 request JSON", e)
+                NIP55DebugLogger.logError("PARSE_REQUEST", e)
+                sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                    putExtra("error", "Invalid request format: ${e.message}")
+                })
+                return
+            }
         }
 
-        Log.d(TAG, "Processing traditional NIP-55 request from: $callingApp")
-
-        val request = try {
-            gson.fromJson(requestJson, NIP55Request::class.java)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse NIP-55 request JSON", e)
-            NIP55DebugLogger.logError("PARSE_REQUEST", e)
-            sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
-                putExtra("error", "Invalid request format: ${e.message}")
-            })
-            return
-        }
-
-        processNIP55Request(request, callingApp, replyPendingIntent)
+        processNIP55Request(request, request.callingApp, replyPendingIntent)
     }
 
     /**
@@ -186,8 +231,7 @@ class MainActivity : AppCompatActivity() {
             type = operationType,
             params = params,
             callingApp = callingApp,
-            timestamp = System.currentTimeMillis(),
-            event = eventData
+            timestamp = System.currentTimeMillis()
         )
 
         processNIP55Request(request, callingApp, replyPendingIntent)
@@ -249,12 +293,14 @@ class MainActivity : AppCompatActivity() {
                     if (result.ok && result.result != null) {
                         Log.d(TAG, "Setting RESULT_OK for NIP-55 request: ${request.id}")
                         sendReply(replyPendingIntent, RESULT_OK, Intent().apply {
-                            putExtra("result_data", result.result)
+                            putExtra("id", request.id)  // Required by sendReply
+                            putExtra("result", result.result)  // Changed from "result_data"
                             putExtra("result_code", RESULT_OK)
                         })
                     } else {
                         Log.d(TAG, "Setting RESULT_CANCELED for NIP-55 request: ${request.id} - ${result.reason}")
                         sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                            putExtra("id", request.id)  // Required by sendReply
                             putExtra("error", result.reason ?: "Request failed")
                             putExtra("result_code", RESULT_CANCELED)
                         })
@@ -268,6 +314,7 @@ class MainActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                        putExtra("id", request.id)  // Required by sendReply
                         putExtra("error", "Request failed: ${e.message}")
                         putExtra("result_code", RESULT_CANCELED)
                     })
@@ -630,48 +677,46 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Send reply via direct broadcast to InvisibleNIP55Handler
+     * Send reply via PendingNIP55ResultRegistry (cross-task safe)
      */
     private fun sendReply(replyPendingIntent: PendingIntent?, resultCode: Int, resultData: Intent) {
-        // Get the broadcast action from the intent that started this NIP-55 handling
-        val broadcastAction = intent?.getStringExtra("reply_broadcast_action")
-            ?: throw IllegalStateException("No broadcast action provided - reply_broadcast_action missing from intent")
+        // Get request ID to identify which callback to invoke
+        val requestId = resultData.getStringExtra("id")
 
-        Log.d(TAG, "Sending reply via direct broadcast: $broadcastAction with result code: $resultCode")
-
-        // Create broadcast intent with the correct action and data
-        val broadcastIntent = Intent(broadcastAction).apply {
-            // Copy all extras from resultData to the broadcast intent
-            putExtras(resultData)
-            // Add the result code as an extra for the broadcast receiver
-            putExtra("result_code", resultCode)
-            // Set package to restrict to our app for security
-            setPackage(packageName)
-        }
-
-        // Send broadcast directly with the data included
-        sendBroadcast(broadcastIntent)
-
-        Log.d(TAG, "Direct broadcast sent successfully")
-
-        // If this is a background service request, also notify the background signing service
-        val isBackgroundServiceRequest = intent?.getBooleanExtra("background_service_request", false) ?: false
-        if (isBackgroundServiceRequest) {
-            Log.d(TAG, "Notifying background signing service of completion")
-
-            val serviceCompletionIntent = Intent(Nip55BackgroundSigningService.ACTION_SIGNING_COMPLETE).apply {
-                putExtra("success", resultCode == RESULT_OK)
-                putExtra("request_id", resultData.getStringExtra("id") ?: "unknown")
-                if (resultCode == RESULT_OK) {
-                    putExtra("result_data", resultData.getStringExtra("result_data"))
-                } else {
-                    putExtra("error", resultData.getStringExtra("error"))
-                }
-                setPackage(packageName)
+        if (requestId != null) {
+            // Create NIP55Result from resultData
+            val result = if (resultCode == RESULT_OK) {
+                NIP55Result(
+                    ok = true,
+                    type = "result",
+                    id = requestId,
+                    result = resultData.getStringExtra("result"),
+                    reason = null
+                )
+            } else {
+                NIP55Result(
+                    ok = false,
+                    type = "error",
+                    id = requestId,
+                    result = null,
+                    reason = resultData.getStringExtra("error") ?: "User denied permission"
+                )
             }
 
-            sendBroadcast(serviceCompletionIntent)
-            Log.d(TAG, "Background signing service completion notification sent")
+            Log.d(TAG, "Delivering result to registry for request: $requestId (ok=${result.ok})")
+
+            // Deliver result via registry (works across task boundaries)
+            val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+
+            if (delivered) {
+                Log.d(TAG, "✓ Result delivered successfully via registry")
+            } else {
+                Log.w(TAG, "✗ No callback registered for request: $requestId")
+            }
+        } else {
+            Log.w(TAG, "No request ID in resultData - cannot deliver result")
         }
+
+        finish()
     }
 }
