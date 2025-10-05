@@ -19,8 +19,8 @@ export function NIP55Bridge(): ReactElement | null {
   // No permission synchronization needed - components read directly from storage
 
   useEffect(() => {
-    // Only initialize bridge when node is online and ready
-    if (node.client && node.status === 'online') {
+    // Initialize bridge when node is online OR locked (locked allows get_public_key)
+    if (node.status === 'online' || node.status === 'locked') {
       try {
         // Create the enhanced signing bridge function
         const signing_bridge = create_signing_bridge()
@@ -28,7 +28,7 @@ export function NIP55Bridge(): ReactElement | null {
         // Create clean consolidated bridge interface
         const bridge: NIP55Bridge = {
           ready: true,
-          nodeClient: node.client,
+          nodeClient: node.client || null,  // May be null when locked
           autoSign: executeAutoSigning,
           requestManualPrompt: requestManualPrompt
         }
@@ -41,7 +41,7 @@ export function NIP55Bridge(): ReactElement | null {
         window.nostr.bridge = bridge
 
         set_bridge_ready(true)
-        console.log('NIP-55 bridge initialized with clean interface')
+        console.log(`NIP-55 bridge initialized (status: ${node.status})`)
 
       } catch (error) {
         console.error('Failed to initialize NIP-55 bridge:', error)
@@ -53,7 +53,7 @@ export function NIP55Bridge(): ReactElement | null {
         }
       }
     } else {
-      // Clean up bridge if node goes offline
+      // Clean up bridge if node goes completely offline
       if (window.nostr?.nip55) {
         delete window.nostr.nip55
         if (window.nostr.bridge) {

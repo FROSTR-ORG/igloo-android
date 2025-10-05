@@ -1,7 +1,6 @@
-import { Header }        from '@/components/layout/header.js'
-import { Tabs }          from '@/components/layout/tabs.js'
-import { PromptManager } from '@/components/prompt/index.js'
-import { NIP55Bridge }   from '@/components/nip55-bridge.js'
+import { Header }      from '@/components/layout/header.js'
+import { Tabs }        from '@/components/layout/tabs.js'
+import { NIP55Bridge } from '@/components/nip55-bridge.js'
 
 /**
  * Main application component
@@ -13,7 +12,6 @@ export function App () {
     <div className="app">
       <Header />
       <Tabs />
-      <PromptManager />
       <NIP55Bridge />
     </div>
   )

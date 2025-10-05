@@ -1,6 +1,7 @@
 import {
   createContext,
-  useContext
+  useContext,
+  useEffect
 } from 'react'
 
 import type { ReactElement } from 'react'
@@ -11,89 +12,83 @@ import type {
 
 import type {
   Permission,
+  NIP55OperationType,
+  PermissionRule
+} from '@/types/permissions.js'
+
+import type {
   PermissionAPI
 } from '@/types/prompt.js'
+
+import {
+  initPermissionStorage,
+  checkPermission,
+  setPermission,
+  revokePermission,
+  revokeAllForApp,
+  listPermissions,
+  bulkSetPermissions
+} from '@/lib/permissions.js'
 
 const context = createContext<PermissionAPI | null>(null)
 
 export const PermissionsProvider = ({ children }: ProviderProps): ReactElement => {
 
-  // Helper to get nip55_permissions from storage
-  const get_nip55_permissions = async () => {
-    try {
-      // Use localStorage directly (it's securely polyfilled by the Android bridge)
-      const stored = localStorage.getItem('nip55_permissions')
-      return stored ? JSON.parse(stored) : []
-    } catch (error) {
-      console.error('Failed to load nip55_permissions:', error)
-      return []
-    }
+  // Initialize permission storage on mount
+  useEffect(() => {
+    initPermissionStorage()
+  }, [])
+
+  const has_permission = async (host: string, type: string, kind?: number): Promise<boolean> => {
+    const status = checkPermission(host, type as NIP55OperationType, kind)
+    return status === 'allowed'
   }
 
-  // Helper to save nip55_permissions to storage
-  const save_nip55_permissions = async (permissions: any[]) => {
-    try {
-      const json = JSON.stringify(permissions)
-      // Use localStorage directly (it's securely polyfilled by the Android bridge)
-      localStorage.setItem('nip55_permissions', json)
-    } catch (error) {
-      console.error('Failed to save nip55_permissions:', error)
-    }
+  const set_permission = async (host: string, type: string, allowed: boolean, kind?: number): Promise<void> => {
+    setPermission(host, type as NIP55OperationType, allowed, kind)
   }
 
-  const has_permission = async (host: string, type: string): Promise<boolean> => {
-    const nip55Perms = await get_nip55_permissions()
-    const permission = nip55Perms.find((p: any) =>
-      p.appId === host && p.type === type && p.allowed === true
-    )
-    return permission !== undefined
+  const revoke_permission = async (host: string, type: string, kind?: number): Promise<void> => {
+    revokePermission(host, type as NIP55OperationType, kind)
   }
 
-  const set_permission = async (host: string, type: string, allowed: boolean = true): Promise<void> => {
-    const nip55Perms = await get_nip55_permissions()
-    const existing_index = nip55Perms.findIndex((p: any) => p.appId === host && p.type === type)
-
-    const permission = {
-      appId: host,
-      type: type,
-      allowed: allowed,
-      timestamp: Date.now()
-    }
-
-    if (existing_index >= 0) {
-      nip55Perms[existing_index] = permission
-    } else {
-      nip55Perms.push(permission)
-    }
-
-    await save_nip55_permissions(nip55Perms)
+  const list_permissions_impl = async (host?: string): Promise<Permission[]> => {
+    const perms = listPermissions(host)
+    // Convert PermissionRule to Permission (compatible types)
+    return perms as Permission[]
   }
 
-  const revoke_permission = async (host: string, type: string): Promise<void> => {
-    const nip55Perms = await get_nip55_permissions()
-    const updated_permissions = nip55Perms.filter((p: any) => !(p.appId === host && p.type === type))
-    await save_nip55_permissions(updated_permissions)
-  }
+  const bulk_set_permissions = async (rules: Permission[]): Promise<void> => {
+    // Convert Permission[] to the format bulkSetPermissions expects
+    if (rules.length === 0) return
 
-  const list_permissions = async (): Promise<Permission[]> => {
-    try {
-      const permissions = await get_nip55_permissions()
-      if (!Array.isArray(permissions)) {
-        return []
+    // Group by appId and allowed status for efficient bulk operations
+    const grouped = rules.reduce((acc, rule) => {
+      const key = `${rule.appId}:${rule.allowed}`
+      if (!acc[key]) {
+        acc[key] = { appId: rule.appId, allowed: rule.allowed, perms: [] }
       }
-      // Return permissions in unified format directly - no conversion needed
-      return permissions
-    } catch (error) {
-      console.error('Failed to load permissions:', error)
-      return []
+      acc[key].perms.push({ type: rule.type as NIP55OperationType, kind: rule.kind })
+      return acc
+    }, {} as Record<string, { appId: string; allowed: boolean; perms: Array<{ type: NIP55OperationType; kind?: number }> }>)
+
+    // Execute bulk operations for each group
+    for (const group of Object.values(grouped)) {
+      bulkSetPermissions(group.appId, group.perms, group.allowed)
     }
+  }
+
+  const revoke_all_for_app = async (host: string): Promise<void> => {
+    revokeAllForApp(host)
   }
 
   const api: PermissionAPI = {
     has_permission,
     set_permission,
     revoke_permission,
-    list_permissions
+    list_permissions: list_permissions_impl,
+    bulk_set_permissions,
+    revoke_all_for_app
   }
 
   return (

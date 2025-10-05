@@ -21,7 +21,7 @@ class IglooWebViewClient(private val context: Context) : WebViewClient() {
 
     companion object {
         private const val TAG = "IglooWebViewClient"
-        private const val CUSTOM_SCHEME = "igloopwa"
+        private const val CUSTOM_SCHEME = "igloo"
         private const val PWA_HOST = "app"
     }
 
@@ -154,63 +154,421 @@ class IglooWebViewClient(private val context: Context) : WebViewClient() {
     }
 
     /**
-     * Create asset content (placeholder implementation)
-     * In production, this would read from actual PWA dist files
+     * Create asset content by loading from the assets directory
+     * For index.html, inject polyfills inline before app.js loads
      */
     private fun createAssetContent(path: String): InputStream {
-        return when (path) {
-            "test-polyfills.html" -> {
-                // For now, return a simple placeholder
-                // TODO: Load actual test file from assets when WebView context is available
-                ByteArrayInputStream("Test polyfills page placeholder".toByteArray(Charsets.UTF_8))
+        return try {
+            // Try to load the asset from the assets directory
+            Log.d(TAG, "Attempting to load asset from assets directory: $path")
+
+            // Special handling for index.html - inject polyfills inline
+            if (path == "index.html") {
+                return injectPolyfillsIntoHtml()
             }
-            "test-camera.html" -> {
-                // For now, return a simple placeholder
-                // TODO: Load actual camera test file from assets when WebView context is available
-                ByteArrayInputStream("Camera test page placeholder".toByteArray(Charsets.UTF_8))
-            }
-            "index.html" -> {
-                ByteArrayInputStream(createSecureIndexHtml().toByteArray(Charsets.UTF_8))
-            }
-            "app.js" -> {
-                ByteArrayInputStream("// PWA application JavaScript would be loaded here".toByteArray(Charsets.UTF_8))
-            }
-            "sw.js" -> {
-                ByteArrayInputStream("// Service Worker JavaScript would be loaded here".toByteArray(Charsets.UTF_8))
-            }
-            "manifest.json" -> {
-                val manifest = """{"name":"Igloo PWA","short_name":"Igloo","start_url":"/","display":"standalone"}"""
-                ByteArrayInputStream(manifest.toByteArray(Charsets.UTF_8))
-            }
-            else -> {
-                ByteArrayInputStream("// Asset: $path".toByteArray(Charsets.UTF_8))
-            }
+
+            context.assets.open(path)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load asset from assets directory: $path", e)
+            // Return a simple error message as fallback
+            ByteArrayInputStream("Asset not found: $path".toByteArray(Charsets.UTF_8))
         }
     }
 
     /**
-     * Create secure index.html with polyfill injection
+     * Load index.html and inject polyfills inline before app.js loads
      */
-    private fun createSecureIndexHtml(): String {
-        return """
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Igloo PWA</title>
-                <link rel="manifest" href="manifest.json">
-            </head>
-            <body>
-                <div id="root">Loading...</div>
+    private fun injectPolyfillsIntoHtml(): InputStream {
+        return try {
+            // Read the original index.html
+            val htmlContent = context.assets.open("index.html").bufferedReader().use { it.readText() }
 
-                <!-- Polyfill injection will happen via onPageStarted -->
+            Log.d(TAG, "Injecting polyfills inline into index.html")
+
+            // Create inline polyfill script
+            val polyfillScript = """
                 <script>
-                    console.log('Secure PWA loading...');
-                    // Main PWA script will be injected after polyfills
+                ${getStoragePolyfill()}
+                ${getWebSocketPolyfill()}
+                ${getCameraPolyfill()}
+                console.log('All polyfills loaded inline before app.js');
                 </script>
-            </body>
-            </html>
+            """.trimIndent()
+
+            // Inject polyfills before the closing </head> tag or before first <script> tag
+            val modifiedHtml = if (htmlContent.contains("</head>")) {
+                htmlContent.replace("</head>", "$polyfillScript\n  </head>")
+            } else {
+                htmlContent.replace("<script", "$polyfillScript\n    <script")
+            }
+
+            Log.d(TAG, "Polyfills injected inline successfully")
+            ByteArrayInputStream(modifiedHtml.toByteArray(Charsets.UTF_8))
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to inject polyfills into HTML", e)
+            // Fallback to original HTML
+            context.assets.open("index.html")
+        }
+    }
+
+    /**
+     * Get Storage polyfill code - Clean rewrite with direct API
+     */
+    private fun getStoragePolyfill(): String {
+        return """
+            // Storage polyfill - Direct Android SecureStorageBridge integration
+            (function() {
+                console.log('[Polyfill] Initializing Storage API...');
+
+                // Delete existing storage objects for clean replacement
+                try {
+                    delete window.localStorage;
+                    delete window.sessionStorage;
+                } catch (e) {
+                    // Expected - properties may not be configurable
+                }
+
+                // Create localStorage implementation
+                var localStorageImpl = {
+                    getItem: function(key) {
+                        try {
+                            // Bridge returns raw string value or null
+                            var value = window.StorageBridge.getItem('local', key);
+                            return value; // Returns string or null directly
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.getItem error:', e);
+                            return null;
+                        }
+                    },
+                    setItem: function(key, value) {
+                        try {
+                            // Bridge expects (storageType, key, value)
+                            window.StorageBridge.setItem('local', key, String(value));
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.setItem error:', e);
+                            throw e;
+                        }
+                    },
+                    removeItem: function(key) {
+                        try {
+                            window.StorageBridge.removeItem('local', key);
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.removeItem error:', e);
+                        }
+                    },
+                    clear: function() {
+                        try {
+                            window.StorageBridge.clear('local');
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.clear error:', e);
+                        }
+                    },
+                    key: function(index) {
+                        try {
+                            return window.StorageBridge.key('local', index);
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.key error:', e);
+                            return null;
+                        }
+                    },
+                    get length() {
+                        try {
+                            return window.StorageBridge.length('local') || 0;
+                        } catch (e) {
+                            console.error('[Polyfill] localStorage.length error:', e);
+                            return 0;
+                        }
+                    }
+                };
+
+                // Create sessionStorage implementation
+                var sessionStorageImpl = {
+                    getItem: function(key) {
+                        try {
+                            var value = window.StorageBridge.getItem('session', key);
+                            return value; // Returns string or null directly
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.getItem error:', e);
+                            return null;
+                        }
+                    },
+                    setItem: function(key, value) {
+                        try {
+                            window.StorageBridge.setItem('session', key, String(value));
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.setItem error:', e);
+                            throw e;
+                        }
+                    },
+                    removeItem: function(key) {
+                        try {
+                            window.StorageBridge.removeItem('session', key);
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.removeItem error:', e);
+                        }
+                    },
+                    clear: function() {
+                        try {
+                            window.StorageBridge.clear('session');
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.clear error:', e);
+                        }
+                    },
+                    key: function(index) {
+                        try {
+                            return window.StorageBridge.key('session', index);
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.key error:', e);
+                            return null;
+                        }
+                    },
+                    get length() {
+                        try {
+                            return window.StorageBridge.length('session') || 0;
+                        } catch (e) {
+                            console.error('[Polyfill] sessionStorage.length error:', e);
+                            return 0;
+                        }
+                    }
+                };
+
+                // Install as non-configurable properties
+                Object.defineProperty(window, 'localStorage', {
+                    value: localStorageImpl,
+                    writable: false,
+                    configurable: false
+                });
+
+                Object.defineProperty(window, 'sessionStorage', {
+                    value: sessionStorageImpl,
+                    writable: false,
+                    configurable: false
+                });
+
+                console.log('[Polyfill] Storage API initialized successfully');
+            })();
+        """.trimIndent()
+    }
+
+    /**
+     * Get WebSocket polyfill code - Clean rewrite with direct API
+     */
+    private fun getWebSocketPolyfill(): String {
+        return """
+            // WebSocket polyfill - Direct Android WebSocketBridge integration
+            (function() {
+                console.log('[Polyfill] Initializing WebSocket API...');
+
+                // Store connection callbacks globally
+                window.__wsCallbacks = window.__wsCallbacks || {};
+
+                // Handle events from Android bridge
+                window.__handleWebSocketEvent = function(eventJson) {
+                    try {
+                        var event = JSON.parse(eventJson);
+                        var callback = window.__wsCallbacks[event.connectionId];
+
+                        if (!callback) {
+                            console.warn('[Polyfill] No callback for connection:', event.connectionId);
+                            return;
+                        }
+
+                        callback(event);
+                    } catch (e) {
+                        console.error('[Polyfill] WebSocket event handler error:', e);
+                    }
+                };
+
+                // WebSocket polyfill constructor
+                window.WebSocket = function(url, protocols) {
+                    var self = this;
+
+                    // WebSocket state constants
+                    this.CONNECTING = 0;
+                    this.OPEN = 1;
+                    this.CLOSING = 2;
+                    this.CLOSED = 3;
+
+                    // WebSocket properties
+                    this.url = url;
+                    this.readyState = this.CONNECTING;
+                    this.protocol = '';
+                    this.extensions = '';
+                    this.bufferedAmount = 0;
+
+                    // Event handlers
+                    this.onopen = null;
+                    this.onmessage = null;
+                    this.onerror = null;
+                    this.onclose = null;
+
+                    // Create connection via Android bridge
+                    try {
+                        var protocolsStr = Array.isArray(protocols) ? protocols.join(',') : (protocols || '');
+                        var connectionId = window.WebSocketBridge.createWebSocket(url, protocolsStr);
+                        this._connectionId = connectionId;
+
+                        // Register callback for this connection
+                        window.__wsCallbacks[connectionId] = function(event) {
+                            if (event.type === 'open') {
+                                self.readyState = self.OPEN;
+                                self.protocol = event.protocol || '';
+                                if (self.onopen) {
+                                    self.onopen(new Event('open'));
+                                }
+                            } else if (event.type === 'message') {
+                                if (self.onmessage) {
+                                    var msgEvent = new MessageEvent('message', { data: event.data });
+                                    self.onmessage(msgEvent);
+                                }
+                            } else if (event.type === 'error') {
+                                self.readyState = self.CLOSED;
+                                if (self.onerror) {
+                                    var errorEvent = new Event('error');
+                                    errorEvent.message = event.message || 'WebSocket error';
+                                    self.onerror(errorEvent);
+                                }
+                            } else if (event.type === 'close') {
+                                self.readyState = self.CLOSED;
+                                if (self.onclose) {
+                                    var closeEvent = new CloseEvent('close', {
+                                        code: event.code || 1000,
+                                        reason: event.reason || '',
+                                        wasClean: event.wasClean !== false
+                                    });
+                                    self.onclose(closeEvent);
+                                }
+                                // Clean up callback
+                                delete window.__wsCallbacks[connectionId];
+                            }
+                        };
+
+                        console.log('[Polyfill] WebSocket created:', url, 'ID:', connectionId);
+                    } catch (e) {
+                        console.error('[Polyfill] Failed to create WebSocket:', e);
+                        this.readyState = this.CLOSED;
+                        throw e;
+                    }
+                };
+
+                // WebSocket.prototype.send()
+                window.WebSocket.prototype.send = function(data) {
+                    if (this.readyState !== this.OPEN) {
+                        throw new DOMException('WebSocket is not open: readyState ' + this.readyState + ' (OPEN=' + this.OPEN + ')', 'InvalidStateError');
+                    }
+
+                    try {
+                        window.WebSocketBridge.send(this._connectionId, String(data));
+                    } catch (e) {
+                        console.error('[Polyfill] WebSocket send error:', e);
+                        throw e;
+                    }
+                };
+
+                // WebSocket.prototype.close()
+                window.WebSocket.prototype.close = function(code, reason) {
+                    if (this.readyState === this.CLOSING || this.readyState === this.CLOSED) {
+                        return;
+                    }
+
+                    this.readyState = this.CLOSING;
+
+                    try {
+                        window.WebSocketBridge.close(this._connectionId, code || 1000, reason || '');
+                    } catch (e) {
+                        console.error('[Polyfill] WebSocket close error:', e);
+                        this.readyState = this.CLOSED;
+                    }
+                };
+
+                console.log('[Polyfill] WebSocket API initialized successfully');
+            })();
+        """.trimIndent()
+    }
+
+    /**
+     * Get Camera polyfill code
+     */
+    private fun getCameraPolyfill(): String {
+        return """
+            // Camera polyfill - Direct Android CameraBridge integration
+            (function() {
+                console.log('[Polyfill] Initializing Camera API...');
+
+                // Create mediaDevices polyfill
+                if (!navigator.mediaDevices) {
+                    navigator.mediaDevices = {};
+                }
+
+                navigator.mediaDevices.getUserMedia = function(constraints) {
+                    return new Promise(function(resolve, reject) {
+                        try {
+                            console.log('[Polyfill] getUserMedia called with constraints:', constraints);
+
+                            var constraintsJson = JSON.stringify(constraints || { video: true });
+                            var resultJson = window.CameraBridge.getUserMedia(constraintsJson);
+                            var result = JSON.parse(resultJson);
+
+                            console.log('[Polyfill] getUserMedia result:', result);
+
+                            // Bridge returns: {"data": streamInfo, "message": errorMessage}
+                            if (result.data && result.data.streamId) {
+                                // Create a mock MediaStream object
+                                var stream = {
+                                    id: result.data.streamId,
+                                    active: result.data.active || true,
+                                    getTracks: function() {
+                                        return (result.data.videoTracks || []).concat(result.data.audioTracks || []);
+                                    },
+                                    getVideoTracks: function() {
+                                        return result.data.videoTracks || [];
+                                    },
+                                    getAudioTracks: function() {
+                                        return result.data.audioTracks || [];
+                                    },
+                                    addTrack: function() {},
+                                    removeTrack: function() {},
+                                    _streamId: result.data.streamId
+                                };
+                                console.log('[Polyfill] Camera stream created:', stream.id);
+                                resolve(stream);
+                            } else {
+                                var errorMsg = result.message || 'Camera access denied';
+                                console.error('[Polyfill] Camera access failed:', errorMsg);
+                                reject(new Error(errorMsg));
+                            }
+                        } catch (e) {
+                            console.error('[Polyfill] getUserMedia error:', e);
+                            reject(e);
+                        }
+                    });
+                };
+
+                navigator.mediaDevices.enumerateDevices = function() {
+                    return new Promise(function(resolve, reject) {
+                        try {
+                            var devicesJson = window.CameraBridge.enumerateDevices();
+                            var devices = JSON.parse(devicesJson);
+
+                            console.log('[Polyfill] Enumerated devices:', devices);
+
+                            // Bridge returns raw array of devices
+                            if (Array.isArray(devices)) {
+                                resolve(devices);
+                            } else {
+                                console.error('[Polyfill] Invalid devices format:', devices);
+                                reject(new Error('Invalid device enumeration response'));
+                            }
+                        } catch (e) {
+                            console.error('[Polyfill] enumerateDevices error:', e);
+                            reject(e);
+                        }
+                    });
+                };
+
+                console.log('[Polyfill] Camera API initialized');
+            })();
         """.trimIndent()
     }
 
@@ -244,70 +602,11 @@ class IglooWebViewClient(private val context: Context) : WebViewClient() {
     }
 
     /**
-     * Inject polyfills when page starts loading
+     * Page started loading - polyfills are now injected inline in HTML
      */
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-        Log.d(TAG, "Page started: $url")
-
-        if (url.startsWith("$CUSTOM_SCHEME://") || url.startsWith("http://localhost:")) {
-            Log.d(TAG, "Injecting polyfills for: $url")
-            injectPolyfills(view)
-        }
-
+        Log.d(TAG, "Page started: $url (polyfills are inline)")
         super.onPageStarted(view, url, favicon)
-    }
-
-    /**
-     * Inject polyfills before PWA JavaScript executes
-     */
-    private fun injectPolyfills(webView: WebView) {
-        try {
-            // Inject WebSocket polyfill
-            val webSocketPolyfill = loadPolyfillScript("websocket-polyfill.js")
-            webView.evaluateJavascript(webSocketPolyfill) { result ->
-                Log.d(TAG, "WebSocket polyfill injected: $result")
-            }
-
-            // Inject Storage polyfill
-            val storagePolyfill = loadPolyfillScript("storage-polyfill.js")
-            webView.evaluateJavascript(storagePolyfill) { result ->
-                Log.d(TAG, "Storage polyfill injected: $result")
-            }
-
-            // Inject Camera polyfill
-            val cameraPolyfill = loadPolyfillScript("camera-polyfill.js")
-            webView.evaluateJavascript(cameraPolyfill) { result ->
-                Log.d(TAG, "Camera polyfill injected: $result")
-            }
-
-            // Note: No signing polyfill needed - PWA provides signing to Android, not vice versa
-
-            Log.d(TAG, "All polyfills injected successfully")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to inject polyfills", e)
-        }
-    }
-
-    /**
-     * Load polyfill script from assets
-     */
-    private fun loadPolyfillScript(filename: String): String {
-        return try {
-            // Read the actual polyfill from assets
-            val assetPath = "polyfills/$filename"
-
-            val inputStream = context.assets.open(assetPath)
-            val polyfillCode = inputStream.bufferedReader().use { it.readText() }
-            inputStream.close()
-
-            Log.d(TAG, "Loaded polyfill from assets: $filename (${polyfillCode.length} bytes)")
-            polyfillCode
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load polyfill script from assets: $filename", e)
-            "console.error('Failed to load polyfill: $filename - ${e.message}');"
-        }
     }
 
     /**

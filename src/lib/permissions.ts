@@ -1,128 +1,269 @@
 /**
- * Simple Permission Manager
+ * NIP-55 Permission Storage System
  *
- * Basic permission storage using localStorage for NIP-55 requests.
- * Supports simple allow/deny rules without complex synchronization.
+ * Clean implementation with event kind filtering support.
+ * No legacy compatibility code.
  */
 
-import type { NIP55Request } from '@/types/index.js'
+import type { PermissionRule, PermissionStorage, NIP55OperationType, PermissionStatus, BulkPermissionRequest } from '@/types/permissions.js'
 
-interface SimplePermissionRule {
-  appId: string
-  type: string
-  allowed: boolean
-  timestamp: number
-}
-
-const STORAGE_KEY = 'nip55_permissions'
+const STORAGE_KEY = 'nip55_permissions_v2'
+const STORAGE_VERSION = 2
 
 /**
- * Get all stored permission rules
+ * Initialize permission storage
  */
-function getStoredRules(): SimplePermissionRule[] {
+export function initPermissionStorage(): void {
+  // Initialize new format if not exists
+  const existing = localStorage.getItem(STORAGE_KEY)
+  if (!existing) {
+    const storage: PermissionStorage = {
+      version: STORAGE_VERSION,
+      permissions: []
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(storage))
+    console.log('Initialized NIP-55 permission storage v2')
+  }
+}
+
+/**
+ * Get all stored permissions
+ */
+function getStoredPermissions(): PermissionRule[] {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : []
+    const data = localStorage.getItem(STORAGE_KEY)
+    if (!data) return []
+
+    const storage: PermissionStorage = JSON.parse(data)
+    return storage.permissions || []
   } catch (error) {
-    console.error('Failed to load permissions:', error)
+    console.error('Failed to read permissions:', error)
     return []
   }
 }
 
 /**
- * Save permission rules to localStorage
+ * Save permissions to storage
  */
-function saveRules(rules: SimplePermissionRule[]): void {
+function savePermissions(permissions: PermissionRule[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
+    const storage: PermissionStorage = {
+      version: STORAGE_VERSION,
+      permissions
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(storage))
   } catch (error) {
     console.error('Failed to save permissions:', error)
+    throw new Error('Permission storage failed')
   }
 }
 
 /**
- * Create a permission key for a request
+ * Check if permission exists for a specific request
+ * Implements kind-aware matching with wildcard fallback
  */
-function createPermissionKey(appId: string, type: string): string {
-  return `${appId}:${type}`
-}
+export function checkPermission(
+  appId: string,
+  type: NIP55OperationType,
+  eventKind?: number
+): PermissionStatus {
+  const permissions = getStoredPermissions()
 
-/**
- * Check if a request has an existing permission rule
- */
-export function checkPermission(request: NIP55Request): 'allowed' | 'denied' | 'prompt_required' {
-  const rules = getStoredRules()
-  const appId = request.host || 'unknown'
-  const key = createPermissionKey(appId, request.type)
+  // For sign_event, check kind-specific permission first
+  if (type === 'sign_event' && eventKind !== undefined) {
+    const kindSpecific = permissions.find(p =>
+      p.appId === appId &&
+      p.type === type &&
+      p.kind === eventKind
+    )
 
-  const rule = rules.find(r => createPermissionKey(r.appId, r.type) === key)
+    if (kindSpecific) {
+      return kindSpecific.allowed ? 'allowed' : 'denied'
+    }
 
-  if (rule) {
-    return rule.allowed ? 'allowed' : 'denied'
+    // Fall back to wildcard permission
+    const wildcard = permissions.find(p =>
+      p.appId === appId &&
+      p.type === type &&
+      p.kind === undefined
+    )
+
+    if (wildcard) {
+      return wildcard.allowed ? 'allowed' : 'denied'
+    }
+  } else {
+    // For non-sign_event operations, simple lookup
+    const permission = permissions.find(p =>
+      p.appId === appId &&
+      p.type === type &&
+      p.kind === undefined
+    )
+
+    if (permission) {
+      return permission.allowed ? 'allowed' : 'denied'
+    }
   }
 
   return 'prompt_required'
 }
 
 /**
- * Add a permission rule (when user chooses "remember")
+ * Add or update a single permission
  */
-export function addPermissionRule(appId: string, type: string, allowed: boolean): void {
-  const rules = getStoredRules()
-  const key = createPermissionKey(appId, type)
+export function setPermission(
+  appId: string,
+  type: NIP55OperationType,
+  allowed: boolean,
+  kind?: number
+): void {
+  const permissions = getStoredPermissions()
 
-  // Remove existing rule for this app+type
-  const filteredRules = rules.filter(r => createPermissionKey(r.appId, r.type) !== key)
+  // Remove existing permission with same appId + type + kind
+  const filtered = permissions.filter(p =>
+    !(p.appId === appId && p.type === type && p.kind === kind)
+  )
 
-  // Add new rule
-  filteredRules.push({
+  // Add new permission
+  const newPermission: PermissionRule = {
     appId,
     type,
+    kind: kind !== undefined ? kind : undefined,
     allowed,
     timestamp: Date.now()
-  })
+  }
 
-  saveRules(filteredRules)
-  console.log(`Permission rule added: ${appId}:${type} = ${allowed}`)
+  filtered.push(newPermission)
+  savePermissions(filtered)
+
+  console.log(`Permission ${allowed ? 'granted' : 'denied'}: ${appId}:${type}${kind ? `:${kind}` : ''}`)
 }
 
 /**
- * Remove a permission rule
+ * Revoke a specific permission
  */
-export function removePermissionRule(appId: string, type: string): void {
-  const rules = getStoredRules()
-  const key = createPermissionKey(appId, type)
+export function revokePermission(
+  appId: string,
+  type: NIP55OperationType,
+  kind?: number
+): void {
+  const permissions = getStoredPermissions()
+  const filtered = permissions.filter(p =>
+    !(p.appId === appId && p.type === type && p.kind === kind)
+  )
 
-  const filteredRules = rules.filter(r => createPermissionKey(r.appId, r.type) !== key)
-  saveRules(filteredRules)
-  console.log(`Permission rule removed: ${appId}:${type}`)
+  savePermissions(filtered)
+  console.log(`Permission revoked: ${appId}:${type}${kind ? `:${kind}` : ''}`)
 }
 
 /**
- * Get all permission rules for display/management
+ * Revoke all permissions for an app
  */
-export function getAllPermissionRules(): SimplePermissionRule[] {
-  return getStoredRules()
+export function revokeAllForApp(appId: string): void {
+  const permissions = getStoredPermissions()
+  const filtered = permissions.filter(p => p.appId !== appId)
+
+  savePermissions(filtered)
+  console.log(`All permissions revoked for: ${appId}`)
 }
 
 /**
- * Clear all permission rules
+ * Get all permissions (optionally filtered by app)
  */
-export function clearAllPermissions(): void {
-  localStorage.removeItem(STORAGE_KEY)
-  console.log('All permissions cleared')
+export function listPermissions(appId?: string): PermissionRule[] {
+  const permissions = getStoredPermissions()
+
+  if (appId) {
+    return permissions.filter(p => p.appId === appId)
+  }
+
+  return permissions
 }
 
 /**
- * Legacy compatibility object for existing code
- * TODO: Remove this when all references are updated
+ * Parse NIP-55 permissions array from get_public_key request
  */
-export const unifiedPermissions = {
-  checkPermission,
-  addAutoApprovalRule: (rule: any) => {
-    // Legacy compatibility - convert to simple rule
-    addPermissionRule(rule.appId, rule.scope.actions[0], true)
-  },
-  removeRule: removePermissionRule,
-  clearAll: clearAllPermissions
+export function parseNIP55Permissions(
+  permissionsJson: string,
+  appId: string
+): BulkPermissionRequest {
+  try {
+    const parsed = JSON.parse(permissionsJson)
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('Permissions must be an array')
+    }
+
+    const permissions = parsed.map(p => ({
+      type: p.type as NIP55OperationType,
+      kind: p.kind !== undefined ? Number(p.kind) : undefined
+    }))
+
+    return {
+      appId,
+      permissions
+    }
+  } catch (error) {
+    console.error('Failed to parse NIP-55 permissions:', error)
+    throw new Error('Invalid permissions format')
+  }
+}
+
+/**
+ * Bulk add permissions (atomic operation)
+ */
+export function bulkSetPermissions(
+  appId: string,
+  permissionsToAdd: Array<{ type: NIP55OperationType; kind?: number }>,
+  allowed: boolean
+): void {
+  const existing = getStoredPermissions()
+  const timestamp = Date.now()
+
+  // Create new permission rules
+  const newRules: PermissionRule[] = permissionsToAdd.map(p => ({
+    appId,
+    type: p.type,
+    kind: p.kind !== undefined ? p.kind : undefined,
+    allowed,
+    timestamp
+  }))
+
+  // Remove duplicates from existing permissions
+  const filtered = existing.filter(existingPerm =>
+    !newRules.some(newPerm =>
+      newPerm.appId === existingPerm.appId &&
+      newPerm.type === existingPerm.type &&
+      newPerm.kind === existingPerm.kind
+    )
+  )
+
+  // Add new permissions
+  const updated = [...filtered, ...newRules]
+  savePermissions(updated)
+
+  console.log(`Bulk ${allowed ? 'granted' : 'denied'} ${newRules.length} permissions for ${appId}`)
+}
+
+/**
+ * Get human-readable event kind label
+ */
+export function getEventKindLabel(kind: number): string {
+  const labels: Record<number, string> = {
+    0: 'Metadata',
+    1: 'Text Note',
+    3: 'Contacts',
+    4: 'Direct Message',
+    5: 'Event Deletion',
+    6: 'Repost',
+    7: 'Reaction',
+    22242: 'Relay Authentication',
+    23194: 'Wallet Info',
+    23195: 'Wallet Request',
+    24133: 'Nostr Connect',
+    27235: 'NWC Request',
+    30023: 'Long-form Content',
+    30078: 'App Data'
+  }
+
+  return labels[kind] || `Event Kind ${kind}`
 }

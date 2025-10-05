@@ -1,6 +1,7 @@
 package com.frostr.igloo
 
 import android.app.Activity
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -60,6 +61,13 @@ class InvisibleNIP55Handler : Activity() {
 
             Log.d(TAG, "Parsed NIP-55 request: ${originalRequest.type} from ${originalRequest.callingApp}")
 
+            // Special handling for get_public_key with bulk permissions
+            if (originalRequest.type == "get_public_key" && originalRequest.params.containsKey("permissions")) {
+                Log.d(TAG, "get_public_key with bulk permissions - showing native dialog")
+                showBulkPermissionDialog()
+                return
+            }
+
             // Check permissions
             val permissionStatus = checkPermission(originalRequest)
             Log.d(TAG, "Permission status: $permissionStatus")
@@ -71,16 +79,15 @@ class InvisibleNIP55Handler : Activity() {
                     return
                 }
                 "allowed" -> {
-                    // Use background service for headless signing
-                    // WebView is now attached to invisible 1x1 pixel overlay window for proper rendering
-                    Log.d(TAG, "Permission allowed - using IglooBackgroundService for headless signing")
-                    bindToBackgroundServiceAndSign()
+                    // Permission already granted - execute signing directly via MainActivity
+                    Log.d(TAG, "Permission allowed - delegating to MainActivity for fast signing")
+                    launchMainActivityForFastSigning()
                     return
                 }
                 "prompt_required" -> {
-                    // Launch MainActivity for user prompt
-                    Log.d(TAG, "Permission prompt required - launching MainActivity")
-                    launchMainActivityForPrompt()
+                    // Show native permission dialog
+                    Log.d(TAG, "Permission prompt required - showing native dialog")
+                    showSinglePermissionDialog()
                     return
                 }
             }
@@ -106,9 +113,10 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("result", result)
             putExtra("id", originalRequest.id)
 
-            // For sign_event, include the event
+            // For sign_event, include the SIGNED event (not unsigned)
+            // Amethyst checks 'event' field first, so it must contain the signed event
             if (originalRequest.type == "sign_event") {
-                putExtra("event", originalRequest.params["event"] ?: "")
+                putExtra("event", result) // Use signed event from result
             }
 
             // For get_public_key, include package name
@@ -166,6 +174,193 @@ class InvisibleNIP55Handler : Activity() {
     }
 
     /**
+     * Show native dialog for bulk permission request (get_public_key with permissions array)
+     */
+    private fun showBulkPermissionDialog() {
+        Log.d(TAG, "Showing native bulk permission dialog")
+
+        val permissionsJson = originalRequest.params["permissions"] ?: run {
+            returnError("Missing permissions parameter")
+            return
+        }
+
+        // Must launch MainActivity to show the dialog (Activity requirement)
+        val dialogIntent = Intent(this, MainActivity::class.java).apply {
+            action = "com.frostr.igloo.SHOW_PERMISSION_DIALOG"
+            putExtra("app_id", originalRequest.callingApp)
+            putExtra("permissions_json", permissionsJson)
+            putExtra("is_bulk", true)
+            putExtra("request_id", originalRequest.id)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        // Register callback for dialog result
+        PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
+            override fun onResult(result: NIP55Result) {
+                if (result.ok) {
+                    // Permission was approved - now get the public key
+                    Log.d(TAG, "Permission approved - proceeding with get_public_key")
+
+                    // Launch MainActivity to execute get_public_key
+                    // Permissions are now saved, so this will proceed normally
+                    val mainIntent = Intent(this@InvisibleNIP55Handler, MainActivity::class.java).apply {
+                        action = "com.frostr.igloo.NIP55_SIGNING"
+                        putExtra("nip55_request_id", originalRequest.id)
+                        putExtra("nip55_request_type", originalRequest.type)
+                        putExtra("nip55_request_calling_app", originalRequest.callingApp)
+                        putExtra("nip55_request_params", gson.toJson(originalRequest.params))
+                        putExtra("nip55_show_prompt", false)
+                        // Pass the reply intent from the original request
+                        val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+                        putExtra("reply_pending_intent", replyIntent)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+
+                    startActivity(mainIntent)
+                    finish()
+                } else {
+                    returnError(result.reason ?: "User denied permissions")
+                    cleanup()
+                }
+            }
+        })
+
+        // Set timeout
+        timeoutHandler.postDelayed({
+            PendingNIP55ResultRegistry.cancelCallback(originalRequest.id)
+            if (!isCompleted) {
+                returnError("Permission dialog timeout")
+                cleanup()
+            }
+        }, PROMPT_RESULT_TIMEOUT_MS)
+
+        startActivity(dialogIntent)
+    }
+
+    /**
+     * Show native dialog for single permission request
+     */
+    private fun showSinglePermissionDialog() {
+        Log.d(TAG, "Showing native single permission dialog")
+
+        // Extract event kind if this is a sign_event request
+        val eventKind = if (originalRequest.type == "sign_event" && originalRequest.params.containsKey("event")) {
+            try {
+                val eventJson = originalRequest.params["event"]
+                val eventMap = gson.fromJson(eventJson, Map::class.java)
+                (eventMap["kind"] as? Double)?.toInt()
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+
+        // Must launch MainActivity to show the dialog
+        val dialogIntent = Intent(this, MainActivity::class.java).apply {
+            action = "com.frostr.igloo.SHOW_PERMISSION_DIALOG"
+            putExtra("app_id", originalRequest.callingApp)
+            putExtra("request_type", originalRequest.type)
+            eventKind?.let { putExtra("event_kind", it) }
+            putExtra("is_bulk", false)
+            putExtra("request_id", originalRequest.id)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        // Register callback for dialog result
+        PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
+            override fun onResult(result: NIP55Result) {
+                if (result.ok) {
+                    // Permission was approved - now execute the operation
+                    Log.d(TAG, "Permission approved - proceeding with ${originalRequest.type}")
+
+                    // Launch MainActivity to execute the operation
+                    // Permissions are now saved, so this will proceed normally
+                    val mainIntent = Intent(this@InvisibleNIP55Handler, MainActivity::class.java).apply {
+                        action = "com.frostr.igloo.NIP55_SIGNING"
+                        putExtra("nip55_request_id", originalRequest.id)
+                        putExtra("nip55_request_type", originalRequest.type)
+                        putExtra("nip55_request_calling_app", originalRequest.callingApp)
+                        putExtra("nip55_request_params", gson.toJson(originalRequest.params))
+                        putExtra("nip55_show_prompt", false)
+                        // Pass the reply intent from the original request
+                        val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+                        putExtra("reply_pending_intent", replyIntent)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+
+                    startActivity(mainIntent)
+                    finish()
+                } else {
+                    returnError(result.reason ?: "User denied permission")
+                    cleanup()
+                }
+            }
+        })
+
+        // Set timeout
+        timeoutHandler.postDelayed({
+            PendingNIP55ResultRegistry.cancelCallback(originalRequest.id)
+            if (!isCompleted) {
+                returnError("Permission dialog timeout")
+                cleanup()
+            }
+        }, PROMPT_RESULT_TIMEOUT_MS)
+
+        startActivity(dialogIntent)
+    }
+
+    /**
+     * Launch MainActivity for fast signing (no prompt, permission already allowed)
+     * Optimized for speed with minimal visual disruption
+     */
+    private fun launchMainActivityForFastSigning() {
+        Log.d(TAG, "Launching MainActivity for fast signing (no prompt)")
+
+        // Register callback to receive result from MainActivity
+        PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
+            override fun onResult(result: NIP55Result) {
+                Log.d(TAG, "Received fast signing result: ok=${result.ok}")
+
+                if (result.ok && result.result != null) {
+                    Log.d(TAG, "✓ Fast signing completed")
+                    returnResult(result.result)
+                } else {
+                    Log.d(TAG, "✗ Fast signing failed: ${result.reason}")
+                    returnError(result.reason ?: "Signing failed")
+                }
+
+                cleanup()
+            }
+        })
+
+        // Set timeout for signing operation
+        timeoutHandler.postDelayed({
+            PendingNIP55ResultRegistry.cancelCallback(originalRequest.id)
+            if (!isCompleted) {
+                Log.e(TAG, "Fast signing timeout")
+                returnError("Signing operation timeout")
+                cleanup()
+            }
+        }, REQUEST_TIMEOUT_MS)
+
+        // Launch MainActivity with optimized flags for fast signing
+        val mainIntent = Intent(this, MainActivity::class.java).apply {
+            action = "com.frostr.igloo.NIP55_SIGNING"
+            putExtra("nip55_request_id", originalRequest.id)
+            putExtra("nip55_request_type", originalRequest.type)
+            putExtra("nip55_request_calling_app", originalRequest.callingApp)
+            putExtra("nip55_request_params", gson.toJson(originalRequest.params))
+            putExtra("nip55_permission_status", "allowed")
+            putExtra("nip55_show_prompt", false) // Skip prompt UI
+
+            // Proper flags for singleTask activity: reuse existing instance
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        startActivity(mainIntent)
+        Log.d(TAG, "MainActivity launched for fast signing")
+    }
+
+    /**
      * Launch MainActivity to show permission prompt and wait for result via registry
      */
     private fun launchMainActivityForPrompt() {
@@ -202,8 +397,7 @@ class InvisibleNIP55Handler : Activity() {
         // Get permission status to pass to MainActivity
         val permissionStatus = checkPermission(originalRequest)
 
-        // Launch MainActivity using startActivityForResult to keep it in same task
-        // This prevents Android from creating a new task for cross-app launches
+        // Launch MainActivity with proper flags for singleTask
         val mainIntent = Intent(this, MainActivity::class.java).apply {
             action = "com.frostr.igloo.NIP55_SIGNING"
             putExtra("nip55_request_id", originalRequest.id)
@@ -212,10 +406,12 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("nip55_request_params", gson.toJson(originalRequest.params))
             putExtra("nip55_permission_status", permissionStatus)
             putExtra("nip55_show_prompt", permissionStatus == "prompt_required")
+
+            // Proper flags for singleTask activity: reuse existing instance
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        @Suppress("DEPRECATION")
-        startActivityForResult(mainIntent, 0)
+        startActivity(mainIntent)
         Log.d(TAG, "MainActivity launched, waiting for result via registry...")
     }
 
@@ -379,128 +575,82 @@ class InvisibleNIP55Handler : Activity() {
     // ========== Permission Checking ==========
 
     /**
-     * Check permission status for the request
+     * Check permission status for the request with event kind support
      * Returns "allowed", "denied", or "prompt_required"
+     *
+     * Implements kind-aware matching:
+     * - For sign_event: Check kind-specific permission first, then wildcard
+     * - For other operations: Simple type matching
      */
     private fun checkPermission(request: NIP55Request): String {
         return try {
             val storageBridge = StorageBridge(this)
-            val permissionsJson = storageBridge.getItem("local", "nip55_permissions")
+            val permissionsJson = storageBridge.getItem("local", "nip55_permissions_v2")
                 ?: return "prompt_required"
 
             val permissionListType = object : com.google.gson.reflect.TypeToken<Array<Permission>>() {}.type
             val permissions: Array<Permission> = gson.fromJson<Array<Permission>>(permissionsJson, permissionListType)
 
-            val permission = permissions.find { p ->
-                p.appId == request.callingApp && p.type == request.type
+            // Extract event kind for sign_event requests
+            var eventKind: Int? = null
+            if (request.type == "sign_event" && request.params.containsKey("event")) {
+                try {
+                    val eventJson = request.params["event"]
+                    val eventMap = gson.fromJson<Map<String, Any>>(eventJson, Map::class.java)
+                    eventKind = (eventMap["kind"] as? Double)?.toInt()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to extract event kind from request", e)
+                }
             }
 
-            when {
-                permission == null -> "prompt_required"
-                permission.allowed -> "allowed"
-                else -> "denied"
+            // For sign_event with kind, check kind-specific permission first
+            if (request.type == "sign_event" && eventKind != null) {
+                val kindSpecific = permissions.find { p ->
+                    p.appId == request.callingApp &&
+                    p.type == request.type &&
+                    p.kind == eventKind
+                }
+
+                if (kindSpecific != null) {
+                    Log.d(TAG, "Found kind-specific permission: ${request.callingApp}:${request.type}:$eventKind = ${kindSpecific.allowed}")
+                    return if (kindSpecific.allowed) "allowed" else "denied"
+                }
+
+                // Fall back to wildcard permission
+                val wildcard = permissions.find { p ->
+                    p.appId == request.callingApp &&
+                    p.type == request.type &&
+                    p.kind == null
+                }
+
+                if (wildcard != null) {
+                    Log.d(TAG, "Found wildcard permission: ${request.callingApp}:${request.type} = ${wildcard.allowed}")
+                    return if (wildcard.allowed) "allowed" else "denied"
+                }
+            } else {
+                // For non-sign_event or sign_event without kind, simple lookup
+                val permission = permissions.find { p ->
+                    p.appId == request.callingApp &&
+                    p.type == request.type &&
+                    p.kind == null
+                }
+
+                if (permission != null) {
+                    Log.d(TAG, "Found permission: ${request.callingApp}:${request.type} = ${permission.allowed}")
+                    return if (permission.allowed) "allowed" else "denied"
+                }
             }
+
+            "prompt_required"
         } catch (e: Exception) {
             Log.e(TAG, "Failed to check permission", e)
             "prompt_required"
         }
     }
 
-    // ========== Background Service Binding ==========
-
-    private var backgroundService: IglooBackgroundService? = null
-    private var isServiceBound = false
-
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.d(TAG, "Connected to IglooBackgroundService")
-            val localBinder = binder as? IglooBackgroundService.LocalBinder
-            backgroundService = localBinder?.getService()
-            isServiceBound = true
-
-            // Process the request now that we're connected
-            processRequestViaBackgroundService()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(TAG, "Disconnected from IglooBackgroundService")
-            backgroundService = null
-            isServiceBound = false
-        }
-    }
-
-    /**
-     * Bind to IglooBackgroundService and process request
-     */
-    private fun bindToBackgroundServiceAndSign() {
-        try {
-            val serviceIntent = Intent(this, IglooBackgroundService::class.java)
-            val bound = bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
-
-            if (!bound) {
-                Log.e(TAG, "Failed to bind to IglooBackgroundService")
-                returnError("Background service unavailable")
-                return
-            }
-
-            // Set timeout for service binding
-            timeoutHandler.postDelayed({
-                if (!isServiceBound) {
-                    Log.e(TAG, "Service binding timeout")
-                    unbindService(serviceConnection)
-                    returnError("Background service timeout")
-                }
-            }, SERVICE_BIND_TIMEOUT_MS)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to bind to background service", e)
-            returnError("Failed to bind to background service: ${e.message}")
-        }
-    }
-
-    /**
-     * Process NIP-55 request via background service
-     */
-    private fun processRequestViaBackgroundService() {
-        Log.d(TAG, "Processing request via IglooBackgroundService")
-
-        handlerScope.launch {
-            try {
-                val service = backgroundService
-                if (service == null) {
-                    Log.e(TAG, "Background service reference lost")
-                    returnError("Background service unavailable")
-                    return@launch
-                }
-
-                // Call background service to process the request
-                val result = service.processNIP55Request(
-                    request = originalRequest,
-                    permissionStatus = "allowed"
-                )
-
-                Log.d(TAG, "Background service result: ok=${result.ok}")
-
-                if (result.ok && result.result != null) {
-                    // Result is already a String from AsyncBridge
-                    returnResult(result.result)
-                } else {
-                    val errorMsg = result.reason ?: "Unknown error"
-                    Log.e(TAG, "Background service returned error: $errorMsg")
-                    returnError(errorMsg)
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Background service request failed", e)
-                returnError("Background service error: ${e.message}")
-            } finally {
-                if (isServiceBound) {
-                    unbindService(serviceConnection)
-                    isServiceBound = false
-                }
-            }
-        }
-    }
+    // NOTE: Background service signing code removed
+    // Background signing isn't possible anyway, so IglooBackgroundService was deleted
+    // All signing now happens through MainActivity with user present
 
     // ========== Focus Management ==========
 

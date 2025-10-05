@@ -78,6 +78,13 @@ class StorageBridge(private val context: Context) {
     @JavascriptInterface
     fun setItem(storageType: String, key: String, value: String): String {
         return try {
+            // Debug logging for igloo-pwa data
+            if (key == "igloo-pwa") {
+                Log.d(TAG, "DEBUG: Storing igloo-pwa length: ${value.length}")
+                Log.d(TAG, "DEBUG: Contains 'share' field: ${value.contains("\"share\":")}")
+                Log.d(TAG, "DEBUG: Full value: $value")
+            }
+
             // Validate parameters
             if (key.isEmpty()) {
                 return gson.toJson(StorageResult.Error("Key cannot be empty"))
@@ -116,6 +123,12 @@ class StorageBridge(private val context: Context) {
 
             if (value != null) {
                 Log.d(TAG, "Retrieved item: $key from $storageType storage")
+                // Debug logging for igloo-pwa data
+                if (key == "igloo-pwa") {
+                    Log.d(TAG, "DEBUG: Retrieved igloo-pwa length: ${value.length}")
+                    Log.d(TAG, "DEBUG: Contains 'share' field: ${value.contains("\"share\":")}")
+                    Log.d(TAG, "DEBUG: Full value: $value")
+                }
             } else {
                 Log.d(TAG, "Item not found: $key in $storageType storage")
             }

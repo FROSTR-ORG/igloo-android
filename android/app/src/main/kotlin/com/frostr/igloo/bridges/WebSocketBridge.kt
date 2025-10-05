@@ -39,7 +39,7 @@ class WebSocketBridge(private val webView: WebView) {
      * Creates a new WebSocket connection
      * @param url WebSocket URL (ws:// or wss://)
      * @param protocols Optional protocols (comma-separated)
-     * @return Connection ID for subsequent operations
+     * @return Connection ID string (UUID)
      */
     @JavascriptInterface
     fun createWebSocket(url: String, protocols: String = ""): String {
@@ -73,84 +73,68 @@ class WebSocketBridge(private val webView: WebView) {
 
             connections[connectionId] = connection
 
-            Log.i(TAG, "WebSocket connection created: $url")
-            return gson.toJson(WebSocketResult.Success(connectionId))
+            Log.i(TAG, "WebSocket connection created: $url (ID: $connectionId)")
+            // Return raw connectionId string for polyfill
+            return connectionId
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create WebSocket connection", e)
-            return gson.toJson(WebSocketResult.Error("Failed to create connection: ${e.message}"))
+            throw RuntimeException("Failed to create WebSocket: ${e.message}", e)
         }
     }
 
     /**
      * Sends a message through the WebSocket connection
-     * @param connectionId Connection ID from createWebSocket
-     * @param message Message to send
-     * @return Success/error result
+     * Polyfill-compatible alias
      */
     @JavascriptInterface
-    fun sendMessage(connectionId: String, message: String): String {
+    fun send(connectionId: String, message: String) {
         val connection = connections[connectionId]
         if (connection == null) {
-            return gson.toJson(WebSocketResult.Error("Connection not found"))
+            Log.w(TAG, "Cannot send - connection not found: $connectionId")
+            return
         }
 
-        return try {
+        try {
             when (connection.state) {
                 WebSocketState.OPEN -> {
-                    val success = connection.webSocket.send(message)
-                    if (success) {
-                        gson.toJson(WebSocketResult.Success("Message sent"))
-                    } else {
-                        gson.toJson(WebSocketResult.Error("Message queue full"))
-                    }
+                    connection.webSocket.send(message)
+                    Log.d(TAG, "Message sent on connection: $connectionId")
                 }
                 WebSocketState.CONNECTING -> {
                     // Queue message for when connection opens
                     connection.queuedMessages.add(message)
-                    gson.toJson(WebSocketResult.Success("Message queued"))
+                    Log.d(TAG, "Message queued for connection: $connectionId")
                 }
                 else -> {
-                    gson.toJson(WebSocketResult.Error("Connection not open"))
+                    Log.w(TAG, "Cannot send - connection not open: $connectionId (state: ${connection.state})")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending message", e)
-            gson.toJson(WebSocketResult.Error("Send failed: ${e.message}"))
+            Log.e(TAG, "Error sending message on connection: $connectionId", e)
         }
     }
 
     /**
      * Closes a WebSocket connection
-     * @param connectionId Connection ID
-     * @param code Close code (default 1000 = normal closure)
-     * @param reason Close reason
-     * @return Success/error result
+     * Polyfill-compatible alias
      */
     @JavascriptInterface
-    fun closeWebSocket(connectionId: String, code: Int = 1000, reason: String = ""): String {
-        Log.d(TAG, "Closing WebSocket connection: $connectionId")
+    fun close(connectionId: String, code: Int = 1000, reason: String = "") {
+        Log.d(TAG, "Closing WebSocket connection: $connectionId (code: $code, reason: $reason)")
 
         val connection = connections[connectionId]
         if (connection == null) {
-            Log.w(TAG, "Connection not found: $connectionId")
-            return gson.toJson(WebSocketResult.Error("Connection not found"))
+            Log.w(TAG, "Cannot close - connection not found: $connectionId")
+            return
         }
 
-        return try {
+        try {
             connection.state = WebSocketState.CLOSING
-            val success = connection.webSocket.close(code, reason)
-
-            if (success) {
-                Log.d(TAG, "WebSocket close initiated")
-                gson.toJson(WebSocketResult.Success("Close initiated"))
-            } else {
-                Log.w(TAG, "Failed to close WebSocket")
-                gson.toJson(WebSocketResult.Error("Close failed"))
-            }
+            connection.webSocket.close(code, reason)
+            Log.d(TAG, "WebSocket close initiated for connection: $connectionId")
         } catch (e: Exception) {
-            Log.e(TAG, "Error closing WebSocket", e)
-            gson.toJson(WebSocketResult.Error("Close failed: ${e.message}"))
+            Log.e(TAG, "Error closing WebSocket connection: $connectionId", e)
         }
     }
 
@@ -175,8 +159,7 @@ class WebSocketBridge(private val webView: WebView) {
     }
 
     /**
-     * Notify JavaScript of WebSocket events
-     * This method is called from the WebSocket listener
+     * Notify JavaScript of WebSocket events via polyfill callback
      */
     private fun notifyJavaScript(event: String, connectionId: String, data: String? = null) {
         val eventData = gson.toJson(WebSocketEvent(
@@ -194,10 +177,10 @@ class WebSocketBridge(private val webView: WebView) {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
 
-        // Call JavaScript event handler on UI thread
+        // Call polyfill event handler on UI thread
         webView.post {
             webView.evaluateJavascript(
-                "window.WebSocketBridge && window.WebSocketBridge.handleEvent('$escapedEventData')",
+                "window.__handleWebSocketEvent && window.__handleWebSocketEvent('$escapedEventData')",
                 null
             )
         }

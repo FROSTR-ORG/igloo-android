@@ -1,40 +1,35 @@
 import { BifrostNode }                from '@frostr/bifrost'
 import { BifrostSignDevice }         from '@/class/signer.js'
+import { checkPermission }           from '@/lib/permissions.js'
 
 import type {
   NIP55Request,
   NIP55WindowAPI,
   NIP55Result
 } from '@/types/index.js'
+import type { NIP55OperationType } from '@/types/permissions.js'
 
 /**
- * Check automatic permission reading directly from secure storage
+ * Check automatic permission with event kind support
  */
 async function check_permission(request: NIP55Request): Promise<'allowed' | 'prompt_required' | 'denied'> {
   try {
-    // Read permissions directly from secure storage (no window global needed)
-    const stored_permissions_json = localStorage.getItem('nip55_permissions')
-    const stored_permissions = stored_permissions_json ? JSON.parse(stored_permissions_json) : []
-
-    // Check if permission exists for this app + operation
-    const permission = stored_permissions.find((p: any) =>
-      p.appId === request.host && p.type === request.type
-    )
-
-    if (permission) {
-      if (permission.allowed) {
-        console.log(`Permission found: ${request.host}:${request.type} = allowed`)
-        return 'allowed'
-      } else {
-        console.log(`Permission found: ${request.host}:${request.type} = denied`)
-        return 'denied'
-      }
+    // Extract event kind if this is a sign_event request
+    let eventKind: number | undefined
+    if (request.type === 'sign_event' && request.event?.kind !== undefined) {
+      eventKind = request.event.kind
     }
 
-    // No permission found - prompt required
-    console.log(`No permission found for ${request.host}:${request.type}`)
-    return 'prompt_required'
+    // Use new permission system with kind-aware checking
+    const status = checkPermission(
+      request.host,
+      request.type as NIP55OperationType,
+      eventKind
+    )
 
+    console.log(`Permission check: ${request.host}:${request.type}${eventKind ? `:${eventKind}` : ''} = ${status}`)
+
+    return status
   } catch (error) {
     console.error('Failed to check permission:', error)
     return 'prompt_required'
@@ -70,6 +65,24 @@ export async function executeSigningOperation(signer: BifrostSignDevice, request
  * Execute automatic signing operation for Content Resolver requests
  * Clean implementation using bridge interface
  */
+/**
+ * Wait for node client to become available (for auto-unlock scenarios)
+ */
+async function waitForNodeClient(maxWaitMs: number = 3000): Promise<BifrostNode | null> {
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < maxWaitMs) {
+    if (window.nostr?.bridge?.nodeClient) {
+      console.log(`Node client became available after ${Date.now() - startTime}ms`)
+      return window.nostr.bridge.nodeClient
+    }
+    // Wait 100ms before checking again
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+
+  return null
+}
+
 export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Result> {
   console.log('Auto-signing request:', request.type, 'from', request.host)
 
@@ -79,7 +92,45 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
       throw new Error('NIP-55 bridge not ready')
     }
 
-    const nodeClient = window.nostr.bridge.nodeClient
+    let nodeClient = window.nostr.bridge.nodeClient
+
+    // For get_public_key, we can read from settings even when locked
+    if (!nodeClient && request.type === 'get_public_key') {
+      // Try to get pubkey from settings
+      const stored_settings_json = localStorage.getItem('igloo-pwa')
+      if (stored_settings_json) {
+        const settings = JSON.parse(stored_settings_json)
+        if (settings.pubkey) {
+          console.log('Auto-signing get_public_key from settings (node locked)')
+          return {
+            ok: true,
+            type: request.type,
+            id: request.id,
+            result: settings.pubkey
+          }
+        }
+      }
+      throw new Error('No public key available')
+    }
+
+    // For signing operations, check if auto-unlock might happen
+    if (!nodeClient && request.type !== 'get_public_key') {
+      // Check if there's a session password (indicates auto-unlock will happen)
+      const sessionPassword = sessionStorage.getItem('igloo_session_password')
+
+      if (sessionPassword) {
+        console.log('Node locked but session password found - waiting for auto-unlock...')
+        nodeClient = await waitForNodeClient(3000)
+
+        if (!nodeClient) {
+          throw new Error('Auto-unlock timed out - node still locked')
+        }
+      } else {
+        throw new Error('Node is locked - please unlock to sign events')
+      }
+    }
+
+    // Node must be available at this point
     if (!nodeClient) {
       throw new Error('Node client not available')
     }

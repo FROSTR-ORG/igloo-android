@@ -6,17 +6,13 @@ import { ConsoleProvider }     from '@/context/console.js'
 import { NodeProvider }        from '@/context/node.js'
 import { SettingsProvider }    from '@/context/settings.js'
 import { PermissionsProvider } from '@/context/permissions.js'
-import { PromptProvider }      from '@/context/prompt.js'
-import { DevConsole }       from '@/components/dev-console.js'
 
 import './styles/global.css'
 import './styles/layout.css'
 import './styles/node.css'
 import './styles/console.css'
-import './styles/sessions.css'
 import './styles/settings.css'
 import './styles/scanner.css'
-import './styles/prompt.css'
 
 // Fetch the root container.
 const container = document.getElementById('root')
@@ -34,10 +30,7 @@ root.render(
       <PermissionsProvider>
         <ConsoleProvider>
           <NodeProvider>
-            <PromptProvider>
-              <App />
-              <DevConsole />
-            </PromptProvider>
+            <App />
           </NodeProvider>
         </ConsoleProvider>
       </PermissionsProvider>

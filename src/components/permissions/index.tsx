@@ -2,7 +2,7 @@ import { useState, useEffect }      from 'react'
 import { usePermissions } from '@/context/permissions.js'
 
 import type { ReactElement } from 'react'
-import type { Permission }   from '@/types/prompt.js'
+import type { Permission }   from '@/types/permissions.js'
 
 /**
  * Simple Permissions Management Component

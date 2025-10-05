@@ -23,11 +23,13 @@ import com.google.gson.JsonSyntaxException
 import com.frostr.igloo.bridges.StorageBridge
 
 /**
- * Permission data structure matching PWA storage format
+ * Permission data structure matching PWA storage format (v2)
+ * Supports event kind filtering for sign_event permissions
  */
 data class Permission(
     val appId: String,
     val type: String,
+    val kind: Int? = null,  // Optional event kind filter (null = wildcard)
     val allowed: Boolean,
     val timestamp: Long
 )
@@ -44,7 +46,7 @@ class IglooContentProvider : ContentProvider() {
     companion object {
         private const val TAG = "IglooContentProvider"
         private const val TIMEOUT_MS = 30000L
-        private const val MAX_QUERIES_PER_HOUR = 100
+        private const val MAX_QUERIES_PER_HOUR = 10000  // Increased from 100 to handle relay auth events
 
         // Supported NIP-55 operations
         private val SUPPORTED_OPERATIONS = setOf(
@@ -55,8 +57,8 @@ class IglooContentProvider : ContentProvider() {
         )
     }
 
-    // Authority is set dynamically from context
-    private lateinit var authority: String
+    // Base package name (authorities are operation-specific)
+    private lateinit var basePackage: String
 
     // URI matcher initialized in onCreate
     private lateinit var uriMatcher: UriMatcher
@@ -80,21 +82,22 @@ class IglooContentProvider : ContentProvider() {
     private val gson = Gson()
 
     override fun onCreate(): Boolean {
-        // Initialize authority from context
-        authority = "${context?.packageName}.signing"
+        // Initialize base package from context
+        basePackage = context?.packageName ?: "com.frostr.igloo"
 
-        // Initialize URI matcher with dynamic authority
+        // Initialize URI matcher with operation-specific authorities
+        // Matches Amber's pattern: content://packageName.OPERATION
         uriMatcher = UriMatcher(UriMatcher.NO_MATCH).apply {
-            addURI(authority, "GET_PUBLIC_KEY", 1)
-            addURI(authority, "SIGN_EVENT", 2)
-            addURI(authority, "NIP04_ENCRYPT", 3)
-            addURI(authority, "NIP04_DECRYPT", 4)
-            addURI(authority, "NIP44_ENCRYPT", 5)
-            addURI(authority, "NIP44_DECRYPT", 6)
-            addURI(authority, "DECRYPT_ZAP_EVENT", 7)
+            addURI("$basePackage.GET_PUBLIC_KEY", null, 1)
+            addURI("$basePackage.SIGN_EVENT", null, 2)
+            addURI("$basePackage.NIP04_ENCRYPT", null, 3)
+            addURI("$basePackage.NIP04_DECRYPT", null, 4)
+            addURI("$basePackage.NIP44_ENCRYPT", null, 5)
+            addURI("$basePackage.NIP44_DECRYPT", null, 6)
+            addURI("$basePackage.DECRYPT_ZAP_EVENT", null, 7)
         }
 
-        Log.i(TAG, "NIP-55 Content Provider initialized with authority: $authority")
+        Log.i(TAG, "NIP-55 Content Provider initialized with base package: $basePackage")
         return true
     }
 
@@ -131,14 +134,22 @@ class IglooContentProvider : ContentProvider() {
                 return createRejectedCursor("Rate limit exceeded")
             }
 
+            // Debug: Log what Amethyst is sending
+            Log.d(TAG, "Query $queryId - selectionArgs: ${selectionArgs?.joinToString(", ") ?: "null"}")
+            Log.d(TAG, "Query $queryId - selection: $selection")
+            Log.d(TAG, "Query $queryId - projection: ${projection?.joinToString(", ") ?: "null"}")
+
+            // Amethyst passes parameters in projection array, not selectionArgs
+            val args = projection
+
             // Validate request parameters
-            if (!validateNIP55Request(operationType, selectionArgs)) {
+            if (!validateNIP55Request(operationType, args)) {
                 Log.w(TAG, "Invalid request parameters for $operationType")
                 return null
             }
 
             // Check automatic permissions from storage
-            if (!hasAutomaticPermission(callingPackage, operationType)) {
+            if (!hasAutomaticPermission(callingPackage, operationType, args)) {
                 Log.i(TAG, "No automatic permission for $callingPackage:$operationType")
                 return createRejectedCursor("No automatic permission granted")
             }
@@ -184,7 +195,7 @@ class IglooContentProvider : ContentProvider() {
             }
 
             // Forward to main process via existing Intent pipeline
-            forwardToMainProcess(operationType, selectionArgs, callingPackage, uniqueAction)
+            forwardToMainProcess(operationType, args, callingPackage, uniqueAction)
 
             // Block waiting for response with timeout
             if (!queryState.latch.await(TIMEOUT_MS, TimeUnit.SECONDS)) {
@@ -298,35 +309,88 @@ class IglooContentProvider : ContentProvider() {
     }
 
     /**
-     * Check if calling package has automatic permission for operation
-     * TODO: Integrate with actual settings storage
+     * Check if calling package has automatic permission for operation with event kind support
+     *
+     * Implements kind-aware matching:
+     * - For sign_event: Check kind-specific permission first, then wildcard
+     * - For other operations: Simple type matching
      */
-    private fun hasAutomaticPermission(callingPackage: String, operationType: String): Boolean {
+    private fun hasAutomaticPermission(callingPackage: String, operationType: String, args: Array<String>?): Boolean {
         return try {
             // Use StorageBridge to access same encrypted storage as PWA
             val storageBridge = StorageBridge(context!!)
-            val permissionsJson = storageBridge.getItem("local", "nip55_permissions")
+            val permissionsJson = storageBridge.getItem("local", "nip55_permissions_v2")
 
-            if (permissionsJson != null) {
-                // Parse JSON array of permissions
-                val permissions = gson.fromJson(permissionsJson, Array<Permission>::class.java)
+            if (permissionsJson == null) {
+                Log.d(TAG, "No permissions found in storage")
+                return false
+            }
 
-                // Check if this app has permission for this operation
-                val hasPermission = permissions.any {
+            // Parse JSON array of permissions
+            val permissions = gson.fromJson(permissionsJson, Array<Permission>::class.java)
+
+            // Extract event kind for sign_event requests
+            var eventKind: Int? = null
+            if (operationType == "sign_event" && !args.isNullOrEmpty()) {
+                try {
+                    val eventJson = args[0]
+                    val eventMap = gson.fromJson(eventJson, Map::class.java)
+                    eventKind = (eventMap["kind"] as? Double)?.toInt()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to extract event kind from args", e)
+                }
+            }
+
+            // For sign_event with kind, check kind-specific permission first
+            if (operationType == "sign_event" && eventKind != null) {
+                val kindSpecific = permissions.find {
                     it.appId == callingPackage &&
                     it.type == operationType &&
-                    it.allowed == true
+                    it.kind == eventKind &&
+                    it.allowed
                 }
 
-                Log.d(TAG, "Permission check for $callingPackage:$operationType = $hasPermission")
-                hasPermission
-            } else {
-                Log.d(TAG, "No permissions found in storage")
-                false
+                if (kindSpecific != null) {
+                    Log.d(TAG, "Found kind-specific permission: $callingPackage:$operationType:$eventKind = allowed")
+                    return true
+                }
+
+                // Fall back to wildcard permission
+                val wildcard = permissions.find {
+                    it.appId == callingPackage &&
+                    it.type == operationType &&
+                    it.kind == null &&
+                    it.allowed
+                }
+
+                if (wildcard != null) {
+                    Log.d(TAG, "Found wildcard permission: $callingPackage:$operationType = allowed")
+                    return true
+                }
+
+                Log.d(TAG, "No permission found for $callingPackage:$operationType:$eventKind")
+                return false
             }
+
+            // For non-sign_event or sign_event without kind, simple lookup
+            val permission = permissions.find {
+                it.appId == callingPackage &&
+                it.type == operationType &&
+                it.kind == null &&
+                it.allowed
+            }
+
+            if (permission != null) {
+                Log.d(TAG, "Found permission: $callingPackage:$operationType = allowed")
+                return true
+            }
+
+            Log.d(TAG, "No permission found for $callingPackage:$operationType")
+            return false
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to check permissions for $callingPackage:$operationType", e)
-            false
+            return false
         }
     }
 
@@ -342,7 +406,7 @@ class IglooContentProvider : ContentProvider() {
     }
 
     /**
-     * Forward request to MainActivity via Intent pipeline
+     * Forward request to MainActivity via queue (prevents concurrent activity launches)
      */
     private fun forwardToMainProcess(
         operationType: String,
@@ -350,6 +414,8 @@ class IglooContentProvider : ContentProvider() {
         callingPackage: String,
         replyAction: String
     ) {
+        val requestId = UUID.randomUUID().toString()
+
         // Create PendingIntent for reply
         val replyIntent = Intent(replyAction).apply {
             setPackage(context?.packageName)
@@ -363,7 +429,7 @@ class IglooContentProvider : ContentProvider() {
         val requestExtras = Bundle().apply {
             putString("type", operationType)
             putString("calling_package", callingPackage)
-            putString("id", UUID.randomUUID().toString())
+            putString("id", requestId)
 
             when (operationType) {
                 "sign_event" -> {
@@ -388,7 +454,7 @@ class IglooContentProvider : ContentProvider() {
             }
         }
 
-        // Create intent to MainActivity with sanitized flags
+        // Create intent with all necessary data
         val mainIntent = Intent(context, MainActivity::class.java).apply {
             action = "com.frostr.igloo.NIP55_SIGNING"
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -400,8 +466,12 @@ class IglooContentProvider : ContentProvider() {
             putExtra("is_content_resolver", true) // Mark as Content Resolver request
         }
 
-        Log.d(TAG, "Forwarding $operationType to MainActivity via Intent pipeline")
-        context?.startActivity(mainIntent)
+        Log.d(TAG, "Queueing $operationType request to MainActivity (id: $requestId)")
+
+        // Add to queue instead of launching activity directly
+        context?.let {
+            MainActivity.enqueueContentResolverRequest(mainIntent, requestId, it)
+        } ?: Log.e(TAG, "Context is null, cannot enqueue request")
     }
 
     /**

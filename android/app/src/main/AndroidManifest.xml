@@ -5,11 +5,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
 
     <application
@@ -30,11 +25,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="standard"
-            android:taskAffinity=""
+            android:launchMode="singleTask"
             android:alwaysRetainTaskState="true"
             android:excludeFromRecents="false"
-            android:documentLaunchMode="intoExisting"
             android:lockTaskMode="if_whitelisted">
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.MAIN" />
@@ -70,16 +63,11 @@
 
         </activity>
 
-        <!-- Hybrid Background Service - WebSocket + On-Demand PWA -->
-        <service
-            android:name=".IglooBackgroundService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
-
         <!-- NIP-55 Content Provider for background signing -->
+        <!-- Multiple authorities required to match Amber/NIP-55 spec pattern -->
         <provider
             android:name=".IglooContentProvider"
-            android:authorities="${applicationId}.signing"
+            android:authorities="${applicationId}.GET_PUBLIC_KEY;${applicationId}.SIGN_EVENT;${applicationId}.NIP04_ENCRYPT;${applicationId}.NIP04_DECRYPT;${applicationId}.NIP44_ENCRYPT;${applicationId}.NIP44_DECRYPT;${applicationId}.DECRYPT_ZAP_EVENT"
             android:exported="true"
             android:grantUriPermissions="false"
             android:multiprocess="false" />

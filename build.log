@@ -1,0 +1,5 @@
+
+> @frostr/igloo-pwa@0.1.0 build
+> tsx script/build.ts
+
+[ build ] build complete

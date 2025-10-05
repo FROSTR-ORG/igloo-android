@@ -39,6 +39,8 @@ export function decrypt_content (
 ) : string | null {
   try {
     Assert.ok(content.includes('?iv='), 'encrypted content must include iv')
+    console.log('decrypting content', content)
+    console.log('password', password)
     const [ payload, iv ] = content.split('?iv=')
     const pbytes  = Buff.b64url(payload)
     const vector  = Buff.b64url(iv)

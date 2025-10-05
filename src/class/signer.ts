@@ -31,8 +31,7 @@ export class BifrostSignDevice {
   }
 
   async sign_event (event : EventTemplate) : Promise<SignedEvent> {
-    const { content, kind, tags } = event
-    const created_at = now()
+    const { content, created_at, kind, tags } = event
     const pubkey = this._node.group.group_pk.slice(2)
     const tmpl   = { content, created_at, kind, pubkey, tags }
     const id     = get_event_id(tmpl)

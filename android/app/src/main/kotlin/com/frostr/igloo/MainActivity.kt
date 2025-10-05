@@ -20,9 +20,19 @@ import com.frostr.igloo.bridges.UnifiedSigningService
 import com.frostr.igloo.debug.NIP55DebugLogger
 import com.google.gson.Gson
 import kotlinx.coroutines.*
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 // Import NIP55Request data class
 import com.frostr.igloo.NIP55Request
+
+/**
+ * Content Resolver request data class for queue management
+ */
+data class ContentResolverRequest(
+    val intent: Intent,
+    val requestId: String
+)
 
 /**
  * Main Activity with Polyfill Integration
@@ -34,9 +44,36 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "SecureIglooWrapper"
-        private const val CUSTOM_SCHEME = "igloopwa"
+        private const val CUSTOM_SCHEME = "igloo"
         private const val PWA_HOST = "app"
         private const val SECURE_PWA_URL = "$CUSTOM_SCHEME://$PWA_HOST/index.html"
+
+        // Content Resolver request queue (shared across activity instances)
+        private val contentResolverQueue = ConcurrentLinkedQueue<ContentResolverRequest>()
+        private val isProcessingQueue = AtomicBoolean(false)
+
+        // Reference to active MainActivity instance
+        @Volatile
+        private var activeInstance: MainActivity? = null
+
+        /**
+         * Add Content Resolver request to queue and trigger processing
+         */
+        fun enqueueContentResolverRequest(intent: Intent, requestId: String, context: android.content.Context) {
+            val request = ContentResolverRequest(intent, requestId)
+            contentResolverQueue.offer(request)
+            Log.d(TAG, "Content Resolver request queued: $requestId (queue size: ${contentResolverQueue.size})")
+
+            // If there's an active instance, notify it to process queue
+            if (activeInstance != null) {
+                Log.d(TAG, "Active MainActivity instance found, triggering queue processing")
+                activeInstance?.processContentResolverQueue()
+            } else {
+                // No active instance - need to launch MainActivity to process queue
+                Log.d(TAG, "No active MainActivity instance, launching activity to process queue")
+                context.startActivity(intent)
+            }
+        }
     }
 
     private lateinit var webView: WebView
@@ -50,6 +87,8 @@ class MainActivity : AppCompatActivity() {
     private var isSigningReady = false
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val gson = Gson()
+    private var signingOverlay: android.view.View? = null
+    private var splashScreen: android.view.View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // IMMEDIATELY move to background if this is a service request - before any UI setup
@@ -63,21 +102,64 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onCreate ===")
         Log.d(TAG, "Process ID: ${android.os.Process.myPid()}")
 
+        // Clear WebView cache on startup to prevent stale JavaScript during development
+        try {
+            val cacheDir = cacheDir
+            val webViewCacheDir = java.io.File(cacheDir, "webviewCache")
+            if (webViewCacheDir.exists()) {
+                webViewCacheDir.deleteRecursively()
+                Log.d(TAG, "Cleared WebView cache directory")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear WebView cache: ${e.message}")
+        }
+
+        // Register this instance as active
+        activeInstance = this
+
         if (isBackgroundServiceRequest) {
             Log.d(TAG, "Background service request - continuing setup in background")
         }
 
-        // Start IglooBackgroundService on app launch
-        startIglooBackgroundService()
+        // NOTE: IglooBackgroundService was removed (no background signing)
+        // startIglooBackgroundService()
 
         when (intent.action) {
+            "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
+                // Permission dialog request from InvisibleNIP55Handler
+                Log.d(TAG, "Permission dialog request - showing native dialog")
+                NIP55DebugLogger.logIntent("PERMISSION_DIALOG", intent, mapOf(
+                    "process" to "main",
+                    "launchMode" to intent.flags.toString()
+                ))
+                handlePermissionDialogRequest()
+            }
             "com.frostr.igloo.NIP55_SIGNING" -> {
+                val isContentResolver = intent.getBooleanExtra("is_content_resolver", false)
+
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString(),
-                    "backgroundServiceRequest" to isBackgroundServiceRequest
+                    "backgroundServiceRequest" to isBackgroundServiceRequest,
+                    "isContentResolver" to isContentResolver
                 ))
-                handleNIP55Request()
+
+                if (isContentResolver) {
+                    // Content Resolver request - already queued, just initialize and process
+                    Log.d(TAG, "Content Resolver request - initializing WebView and processing queue")
+                    initializeSecureWebView()
+                    loadSecurePWA()
+                    processContentResolverQueue()
+                } else {
+                    // Direct Intent request - traditional flow
+                    val showPrompt = intent.getBooleanExtra("nip55_show_prompt", false)
+                    if (!showPrompt) {
+                        Log.d(TAG, "Fast signing detected - showing splash overlay")
+                        setupSigningOverlay()
+                        showSigningOverlay()
+                    }
+                    handleNIP55Request()
+                }
             }
             else -> {
                 NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
@@ -88,17 +170,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // NOTE: IglooBackgroundService was removed (no background signing needed)
+    // Background signing isn't possible anyway, so this service was deleted
+
     /**
-     * Start IglooBackgroundService
-     * This service manages WebSocket connections and handles NIP-55 requests
+     * Setup signing overlay (splash screen for fast signing)
      */
-    private fun startIglooBackgroundService() {
-        try {
-            val serviceIntent = Intent(this, IglooBackgroundService::class.java)
-            startForegroundService(serviceIntent)
-            Log.d(TAG, "✓ Started IglooBackgroundService")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start IglooBackgroundService", e)
+    private fun setupSigningOverlay() {
+        if (signingOverlay == null) {
+            val inflater = android.view.LayoutInflater.from(this)
+            signingOverlay = inflater.inflate(R.layout.signing_overlay, null)
+        }
+    }
+
+    /**
+     * Show signing overlay (hides PWA during fast signing)
+     */
+    private fun showSigningOverlay() {
+        signingOverlay?.let { overlay ->
+            if (overlay.parent == null) {
+                val rootView = window.decorView as android.view.ViewGroup
+                rootView.addView(overlay)
+                Log.d(TAG, "✓ Signing overlay shown")
+            }
+        }
+    }
+
+    /**
+     * Hide signing overlay (reveals PWA)
+     */
+    private fun hideSigningOverlay() {
+        signingOverlay?.let { overlay ->
+            val parent = overlay.parent as? android.view.ViewGroup
+            parent?.removeView(overlay)
+            Log.d(TAG, "✓ Signing overlay hidden")
         }
     }
 
@@ -211,30 +316,113 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Processing Content Resolver request: $operationType from: $callingApp")
 
         // Convert Content Resolver parameters to NIP55Request format
-        val params = mapOf(
-            "pubkey" to (intent.getStringExtra("pubkey") ?: ""),
-            "plaintext" to (intent.getStringExtra("plaintext") ?: ""),
-            "ciphertext" to (intent.getStringExtra("ciphertext") ?: ""),
-            "current_user" to (intent.getStringExtra("current_user") ?: "")
-        ).filterValues { it.isNotEmpty() }
+        val params = mutableMapOf<String, String>()
 
-        val eventData = intent.getStringExtra("event")?.let { eventJson ->
-            try {
-                gson.fromJson(eventJson, Map::class.java) as? Map<String, Any>
-            } catch (e: Exception) {
-                null
-            }
-        }
+        // Add event parameter if present
+        intent.getStringExtra("event")?.let { params["event"] = it }
+
+        // Add other parameters if present
+        intent.getStringExtra("pubkey")?.let { params["pubkey"] = it }
+        intent.getStringExtra("plaintext")?.let { params["plaintext"] = it }
+        intent.getStringExtra("ciphertext")?.let { params["ciphertext"] = it }
+        intent.getStringExtra("current_user")?.let { params["current_user"] = it }
 
         val request = NIP55Request(
             id = requestId,
             type = operationType,
-            params = params,
+            params = params.toMap(),
             callingApp = callingApp,
             timestamp = System.currentTimeMillis()
         )
 
         processNIP55Request(request, callingApp, replyPendingIntent)
+    }
+
+    /**
+     * Handle permission dialog request from InvisibleNIP55Handler
+     */
+    private fun handlePermissionDialogRequest() {
+        val appId = intent.getStringExtra("app_id") ?: "unknown"
+        val requestId = intent.getStringExtra("request_id") ?: return
+        val isBulk = intent.getBooleanExtra("is_bulk", false)
+
+        Log.d(TAG, "Handling permission dialog request: appId=$appId, bulk=$isBulk, requestId=$requestId")
+
+        // Create appropriate dialog variant
+        val dialog = if (isBulk) {
+            val permissionsJson = intent.getStringExtra("permissions_json") ?: "[]"
+            NIP55PermissionDialog.newInstanceBulk(appId, permissionsJson)
+        } else {
+            val requestType = intent.getStringExtra("request_type") ?: return
+            val eventKind = if (intent.hasExtra("event_kind")) {
+                intent.getIntExtra("event_kind", -1)
+            } else null
+
+            NIP55PermissionDialog.newInstance(appId, requestType, eventKind)
+        }
+
+        // Set callback for dialog result
+        dialog.setCallback(object : NIP55PermissionDialog.PermissionCallback {
+            override fun onApproved() {
+                Log.d(TAG, "Permission approved - executing signing operation")
+                handleApprovedPermission(requestId)
+            }
+
+            override fun onDenied() {
+                Log.d(TAG, "Permission denied - returning error")
+                handleDeniedPermission(requestId)
+            }
+        })
+
+        // Show dialog
+        dialog.show(supportFragmentManager, "NIP55PermissionDialog")
+    }
+
+    /**
+     * Handle approved permission - re-check permission and execute signing operation
+     */
+    private fun handleApprovedPermission(requestId: String) {
+        Log.d(TAG, "Permission approved - delivering result to registry")
+
+        // Permission was saved by the dialog, now signal approval to InvisibleNIP55Handler
+        val result = NIP55Result(
+            ok = true,
+            type = "permission_approved",
+            id = requestId,
+            result = null,
+            reason = null
+        )
+
+        val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+        if (delivered) {
+            Log.d(TAG, "✓ Permission approval delivered via registry")
+        } else {
+            Log.e(TAG, "✗ Failed to deliver permission approval - no callback registered")
+        }
+
+        finish()
+    }
+
+    /**
+     * Handle denied permission - return error
+     */
+    private fun handleDeniedPermission(requestId: String) {
+        val result = NIP55Result(
+            ok = false,
+            type = "permission_denied",
+            id = requestId,
+            result = null,
+            reason = "User denied permission"
+        )
+
+        val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+        if (delivered) {
+            Log.d(TAG, "✓ Permission denial delivered via registry")
+        } else {
+            Log.w(TAG, "✗ No callback registered for request: $requestId")
+        }
+
+        finish()
     }
 
     /**
@@ -296,6 +484,11 @@ class MainActivity : AppCompatActivity() {
                             putExtra("id", request.id)  // Required by sendReply
                             putExtra("result", result.result)  // Changed from "result_data"
                             putExtra("result_code", RESULT_OK)
+
+                            // For sign_event, also include event field (signed event)
+                            if (request.type == "sign_event") {
+                                putExtra("event", result.result)
+                            }
                         })
                     } else {
                         Log.d(TAG, "Setting RESULT_CANCELED for NIP-55 request: ${request.id} - ${result.reason}")
@@ -331,8 +524,23 @@ class MainActivity : AppCompatActivity() {
     private fun initializeSecureWebView() {
         Log.d(TAG, "Initializing secure WebView...")
 
+        // Set content view to our layout with splash screen
+        setContentView(R.layout.activity_main)
+
+        // Get references to views
+        val webViewContainer = findViewById<android.widget.FrameLayout>(R.id.webview_container)
+        splashScreen = findViewById(R.id.splash_screen)
+
+        // Create and add WebView to container
         webView = WebView(this)
-        setContentView(webView)
+        webViewContainer.addView(webView, android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        // Show splash screen initially
+        splashScreen?.visibility = android.view.View.VISIBLE
+        Log.d(TAG, "Splash screen displayed")
 
         // Configure secure WebView settings
         configureSecureWebView()
@@ -428,7 +636,7 @@ class MainActivity : AppCompatActivity() {
 
         // Storage bridge
         storageBridge = StorageBridge(this)
-        webView.addJavascriptInterface(storageBridge, "SecureStorageBridge")
+        webView.addJavascriptInterface(storageBridge, "StorageBridge")
         Log.d(TAG, "Storage bridge registered")
 
         // Restore session storage from backup if available
@@ -459,27 +667,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Load the secure PWA from assets or development server
+     * Load the secure PWA from bundled assets
      */
     private fun loadSecurePWA() {
-        // For development, load from localhost:3000
-        val developmentUrl = "http://localhost:3000"
-        Log.d(TAG, "Loading PWA from development server: $developmentUrl")
+        // Load from bundled assets using custom protocol
+        Log.d(TAG, "Loading PWA from bundled assets: $SECURE_PWA_URL")
 
         try {
-            webView.loadUrl(developmentUrl)
-            Log.d(TAG, "Development PWA load initiated")
+            webView.loadUrl(SECURE_PWA_URL)
+            Log.d(TAG, "Bundled PWA load initiated")
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load development PWA", e)
-            // Fallback to secure PWA
-            try {
-                Log.d(TAG, "Falling back to secure PWA: $SECURE_PWA_URL")
-                webView.loadUrl(SECURE_PWA_URL)
-            } catch (fallbackError: Exception) {
-                Log.e(TAG, "Failed to load fallback PWA", fallbackError)
-                loadErrorPage("Failed to load PWA: ${e.message}")
-            }
+            Log.e(TAG, "Failed to load bundled PWA", e)
+            loadErrorPage("Failed to load PWA: ${e.message}")
         }
     }
 
@@ -546,6 +746,26 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(setupScript) { result ->
             Log.d(TAG, "PWA setup script result: $result")
         }
+
+        // Hide splash screen with fade animation
+        hideSplashScreen()
+    }
+
+    /**
+     * Hide the splash screen with a smooth fade-out animation
+     */
+    private fun hideSplashScreen() {
+        splashScreen?.let { splash ->
+            Log.d(TAG, "Hiding splash screen with fade animation")
+            splash.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .withEndAction {
+                    splash.visibility = android.view.View.GONE
+                    Log.d(TAG, "Splash screen hidden")
+                }
+                .start()
+        }
     }
 
     /**
@@ -596,12 +816,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         when (intent.action) {
+            "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
+                // Permission dialog request from InvisibleNIP55Handler
+                Log.d(TAG, "Permission dialog request in onNewIntent - showing native dialog")
+                NIP55DebugLogger.logIntent("PERMISSION_DIALOG_NEW", intent, mapOf(
+                    "process" to "main",
+                    "launchMode" to intent.flags.toString()
+                ))
+                handlePermissionDialogRequest()
+            }
             "com.frostr.igloo.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED_NEW", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString(),
                     "backgroundServiceRequest" to isBackgroundServiceRequest
                 ))
+
+                // Show signing overlay for fast signing (no prompt)
+                val showPrompt = intent.getBooleanExtra("nip55_show_prompt", false)
+                if (!showPrompt) {
+                    Log.d(TAG, "Fast signing detected in onNewIntent - showing splash overlay")
+                    setupSigningOverlay()
+                    showSigningOverlay()
+                }
+
                 handleNIP55Request()
             }
             else -> {
@@ -642,6 +880,12 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onDestroy ===")
 
+        // Clear active instance if this is the active one
+        if (activeInstance == this) {
+            activeInstance = null
+            Log.d(TAG, "Cleared active MainActivity instance")
+        }
+
         // Clean up WebSocket bridge
         if (::webSocketBridge.isInitialized) {
             webSocketBridge.cleanup()
@@ -677,11 +921,104 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Send reply via PendingNIP55ResultRegistry (cross-task safe)
+     * Process Content Resolver request queue sequentially
+     */
+    private fun processContentResolverQueue() {
+        // Check if already processing
+        if (!isProcessingQueue.compareAndSet(false, true)) {
+            Log.d(TAG, "Queue already being processed")
+            return
+        }
+
+        activityScope.launch {
+            try {
+                Log.d(TAG, "Starting Content Resolver queue processing (queue size: ${contentResolverQueue.size})")
+
+                while (contentResolverQueue.isNotEmpty()) {
+                    val request = contentResolverQueue.poll() ?: break
+
+                    Log.d(TAG, "Processing queued Content Resolver request: ${request.requestId}")
+
+                    try {
+                        // Wait for WebView to be ready
+                        while (!isSecurePWALoaded) {
+                            Log.d(TAG, "Waiting for WebView to be ready...")
+                            delay(100)
+                        }
+
+                        // Process this request using the existing Intent data
+                        val replyPendingIntent = request.intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+                        val isContentResolver = request.intent.getBooleanExtra("is_content_resolver", false)
+
+                        if (isContentResolver) {
+                            // Temporarily update intent for processing
+                            val oldIntent = intent
+                            intent = request.intent
+
+                            handleContentResolverRequest(replyPendingIntent)
+
+                            // Restore original intent
+                            intent = oldIntent
+                        }
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing queued request ${request.requestId}", e)
+                        // Send error reply
+                        val replyPendingIntent = request.intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+                        val broadcastAction = request.intent.getStringExtra("reply_broadcast_action")
+
+                        if (broadcastAction != null) {
+                            val errorIntent = Intent(broadcastAction).apply {
+                                setPackage(packageName)
+                                putExtra("error", "Processing failed: ${e.message}")
+                            }
+                            sendBroadcast(errorIntent)
+                        }
+                    }
+
+                    // Small delay between requests to avoid overwhelming the WebView
+                    delay(50)
+                }
+
+                Log.d(TAG, "Content Resolver queue processing complete")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Critical error in queue processing", e)
+            } finally {
+                isProcessingQueue.set(false)
+
+                // Check if more requests were added during processing
+                if (contentResolverQueue.isNotEmpty()) {
+                    Log.d(TAG, "More requests queued, restarting processing")
+                    processContentResolverQueue()
+                }
+            }
+        }
+    }
+
+    /**
+     * Send reply via PendingNIP55ResultRegistry (cross-task safe) or Broadcast (for ContentProvider)
      */
     private fun sendReply(replyPendingIntent: PendingIntent?, resultCode: Int, resultData: Intent) {
         // Get request ID to identify which callback to invoke
         val requestId = resultData.getStringExtra("id")
+
+        // Check if this is a ContentProvider request
+        val broadcastAction = intent.getStringExtra("reply_broadcast_action")
+
+        if (broadcastAction != null) {
+            // ContentProvider request - send broadcast
+            Log.d(TAG, "Sending broadcast reply for ContentProvider: $broadcastAction")
+            val broadcastIntent = Intent(broadcastAction).apply {
+                setPackage(packageName)
+                putExtras(resultData)
+            }
+            sendBroadcast(broadcastIntent)
+            hideSigningOverlay()
+            // Do NOT call finish() or moveTaskToBack() - keep MainActivity alive for concurrent requests
+            // Just hide the overlay and let the activity stay in the background
+            return
+        }
 
         if (requestId != null) {
             // Create NIP55Result from resultData
@@ -716,6 +1053,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             Log.w(TAG, "No request ID in resultData - cannot deliver result")
         }
+
+        // Hide signing overlay before finishing
+        hideSigningOverlay()
 
         finish()
     }

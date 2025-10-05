@@ -19,8 +19,6 @@ android {
         debug {
             minifyEnabled false
             debuggable true
-            applicationIdSuffix ".debug"
-            versionNameSuffix "-debug"
             // Keep debug logging enabled in debug builds
         }
         release {

@@ -42,6 +42,7 @@ export function NodeInfoView () {
       setError('Password is required')
       return
     }
+    console.log('unlocking node with password', password)
     // Unlock the client.
     node.unlock(password)
     // Reset the password state.
