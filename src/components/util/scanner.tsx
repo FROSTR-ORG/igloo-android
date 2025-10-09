@@ -7,6 +7,22 @@ interface QRScannerProps {
   onError?: (error: Error) => void
 }
 
+// Type definition for native Android QR scanner bridge
+interface QRScannerBridge {
+  scanQRCode: (callbackId: string) => void
+}
+
+// Global callback registry for native scanner
+declare global {
+  interface Window {
+    QRScannerBridge?: QRScannerBridge
+    QRScannerCallbacks?: Record<string, {
+      resolve: (data: string) => void
+      reject: (error: string) => void
+    }>
+  }
+}
+
 export function QRScanner({ onResult, onError }: QRScannerProps) {
   const videoRef   = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
@@ -19,6 +35,47 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
 
     const initializeScanner = async () => {
       console.log('QR Scanner: Initializing scanner...')
+
+      // Check for native Android QR scanner bridge (progressive enhancement)
+      if (window.QRScannerBridge) {
+        console.log('QR Scanner: Native Android QR scanner detected, using native scanner')
+        try {
+          // Initialize callback registry if not exists
+          if (!window.QRScannerCallbacks) {
+            window.QRScannerCallbacks = {}
+          }
+
+          // Generate unique callback ID
+          const callbackId = `qr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+          // Register promise-like callbacks
+          const scanPromise = new Promise<string>((resolve, reject) => {
+            window.QRScannerCallbacks![callbackId] = { resolve, reject }
+          })
+
+          // Call native scanner
+          console.log('QR Scanner: Calling native scanner with callback ID:', callbackId)
+          window.QRScannerBridge.scanQRCode(callbackId)
+
+          // Wait for result
+          const data = await scanPromise
+          console.log('QR Scanner: Native scanner returned data:', data)
+          onResult(data)
+          return
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err))
+          console.error('QR Scanner: Native scanner failed:', error)
+          setError(error.message)
+          if (onError) {
+            onError(error)
+          }
+          return
+        }
+      }
+
+      // Fallback to web-based QR scanner
+      console.log('QR Scanner: No native scanner available, using web-based scanner')
+
       if (!videoRef.current) {
         console.error('QR Scanner: Video element not found')
         setError('Video element not found')
@@ -89,6 +146,17 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
       }
     }
   }, [onResult, onError])
+
+  // If native scanner is available, don't show video element
+  if (window.QRScannerBridge) {
+    return (
+      <div className="scanner-container">
+        <div className="scanner-native-placeholder">
+          Opening native QR scanner...
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="scanner-container">

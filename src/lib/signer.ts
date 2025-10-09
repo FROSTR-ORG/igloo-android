@@ -1,40 +1,11 @@
 import { BifrostNode }                from '@frostr/bifrost'
 import { BifrostSignDevice }         from '@/class/signer.js'
-import { checkPermission }           from '@/lib/permissions.js'
 
 import type {
   NIP55Request,
   NIP55WindowAPI,
   NIP55Result
 } from '@/types/index.js'
-import type { NIP55OperationType } from '@/types/permissions.js'
-
-/**
- * Check automatic permission with event kind support
- */
-async function check_permission(request: NIP55Request): Promise<'allowed' | 'prompt_required' | 'denied'> {
-  try {
-    // Extract event kind if this is a sign_event request
-    let eventKind: number | undefined
-    if (request.type === 'sign_event' && request.event?.kind !== undefined) {
-      eventKind = request.event.kind
-    }
-
-    // Use new permission system with kind-aware checking
-    const status = checkPermission(
-      request.host,
-      request.type as NIP55OperationType,
-      eventKind
-    )
-
-    console.log(`Permission check: ${request.host}:${request.type}${eventKind ? `:${eventKind}` : ''} = ${status}`)
-
-    return status
-  } catch (error) {
-    console.error('Failed to check permission:', error)
-    return 'prompt_required'
-  }
-}
 
 
 /**
@@ -161,47 +132,20 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
 }
 
 /**
- * Global callback for manual prompt - set by React PromptProvider
+ * NOTE: Manual prompt system removed - Android handles all prompting via native dialogs
+ * PWA no longer shows permission prompts - permissions must be pre-approved in localStorage
  */
-let promptCallback: ((request: NIP55Request) => Promise<NIP55Result>) | null = null
 
 /**
- * Set the manual prompt callback (called by React PromptProvider)
- */
-export function setManualPromptCallback(callback: (request: NIP55Request) => Promise<NIP55Result>) {
-  promptCallback = callback
-}
-
-/**
- * Request manual user prompt for signing
- * Clean implementation that connects to React prompt context
- */
-export async function requestManualPrompt(request: NIP55Request): Promise<NIP55Result> {
-  console.log('Manual prompt request:', request.type, 'from', request.host)
-
-  if (!promptCallback) {
-    console.error('Manual prompt callback not set - PromptProvider not initialized')
-    return {
-      ok: false,
-      type: request.type,
-      id: request.id,
-      reason: 'Prompt system not available'
-    }
-  }
-
-  return await promptCallback(request)
-}
-
-/**
- * Create the main NIP-55 signing bridge function with automatic permission support
+ * Create the main NIP-55 signing bridge function
+ *
+ * Pure signing interface - no permission checking
+ * Android handles all permission logic via InvisibleNIP55Handler
  */
 export function create_signing_bridge(): NIP55WindowAPI {
   return async (request: NIP55Request): Promise<NIP55Result> => {
     const start_time = Date.now()
     console.log('NIP-55 signing request:', request.type, request.id)
-
-    // Log request type for debugging
-    console.log('NIP-55 request received')
 
     try {
       // Basic input validation
@@ -209,44 +153,14 @@ export function create_signing_bridge(): NIP55WindowAPI {
         throw new Error('Invalid request: missing id or type')
       }
 
-      // Check if permission exists
-      const permission_status = await check_permission(request)
+      // Execute signing directly - Android already checked permissions
+      console.log(`Executing auto-signing for ${request.host}:${request.type}`)
+      const result = await executeAutoSigning(request)
 
-      // Handle denied permissions
-      if (permission_status === 'denied') {
-        console.log(`Permission denied for ${request.host}:${request.type}`)
-        return {
-          ok     : false,
-          type   : request.type,
-          id     : request.id,
-          reason : 'Permission denied'
-        }
-      }
+      const duration = Date.now() - start_time
+      console.log(`Auto-signing completed in ${duration}ms`)
 
-      // Handle allowed permissions - auto-sign
-      if (permission_status === 'allowed') {
-        console.log(`Permission allowed for ${request.host}:${request.type} - auto-signing`)
-        const result = await executeAutoSigning(request)
-
-        const duration = Date.now() - start_time
-        console.log(`Auto-signing completed in ${duration}ms`)
-
-        return result
-      }
-
-      // Handle no permission - prompt required
-      if (permission_status === 'prompt_required') {
-        console.log(`Prompting user for ${request.host}:${request.type}`)
-        return await requestManualPrompt(request)
-      }
-
-      // This shouldn't happen
-      return {
-        ok     : false,
-        type   : request.type,
-        id     : request.id,
-        reason : 'Unknown permission status'
-      }
+      return result
 
     } catch (error) {
       console.error('Signing bridge error:', error)

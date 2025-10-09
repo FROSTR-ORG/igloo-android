@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
 
     <application
@@ -25,7 +27,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:alwaysRetainTaskState="true"
             android:excludeFromRecents="false"
             android:lockTaskMode="if_whitelisted">
@@ -43,6 +45,12 @@
             <meta-data android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- QR Scanner Activity -->
+        <activity
+            android:name=".QRScannerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <!-- Invisible NIP-55 Handler - thin routing layer -->
         <activity
@@ -63,14 +71,23 @@
 
         </activity>
 
-        <!-- NIP-55 Content Provider for background signing -->
-        <!-- Multiple authorities required to match Amber/NIP-55 spec pattern -->
+        <!-- NIP-55 Signing Service - keeps process alive during signing -->
+        <service
+            android:name=".NIP55SigningService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Nostr event signing" />
+        </service>
+
+        <!-- NIP-55 ContentProvider for background signing (Amethyst compatibility) -->
         <provider
-            android:name=".IglooContentProvider"
-            android:authorities="${applicationId}.GET_PUBLIC_KEY;${applicationId}.SIGN_EVENT;${applicationId}.NIP04_ENCRYPT;${applicationId}.NIP04_DECRYPT;${applicationId}.NIP44_ENCRYPT;${applicationId}.NIP44_DECRYPT;${applicationId}.DECRYPT_ZAP_EVENT"
+            android:name=".NIP55ContentProvider"
+            android:authorities="com.frostr.igloo.GET_PUBLIC_KEY;com.frostr.igloo.SIGN_EVENT;com.frostr.igloo.NIP04_ENCRYPT;com.frostr.igloo.NIP04_DECRYPT;com.frostr.igloo.NIP44_ENCRYPT;com.frostr.igloo.NIP44_DECRYPT;com.frostr.igloo.DECRYPT_ZAP_EVENT"
             android:exported="true"
-            android:grantUriPermissions="false"
-            android:multiprocess="false" />
+            android:enabled="true" />
 
     </application>
 </manifest>

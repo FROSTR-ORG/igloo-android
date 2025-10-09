@@ -1,4 +1,3 @@
-export * from './global.js'
 export * from './signer.js'
 export * from './prompt.js'
 export * from './settings.js'

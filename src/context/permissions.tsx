@@ -13,12 +13,9 @@ import type {
 import type {
   Permission,
   NIP55OperationType,
-  PermissionRule
-} from '@/types/permissions.js'
-
-import type {
+  PermissionRule,
   PermissionAPI
-} from '@/types/prompt.js'
+} from '@/types/permissions.js'
 
 import {
   initPermissionStorage,

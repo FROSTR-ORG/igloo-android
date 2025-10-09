@@ -64,3 +64,15 @@ export interface BulkPermissionRequest {
  * @deprecated Use PermissionRule instead
  */
 export type Permission = PermissionRule
+
+/**
+ * Permission management API
+ */
+export interface PermissionAPI {
+  has_permission        : (host: string, type: string, kind?: number) => Promise<boolean>
+  set_permission        : (host: string, type: string, allowed: boolean, kind?: number) => Promise<void>
+  revoke_permission     : (host: string, type: string, kind?: number) => Promise<void>
+  list_permissions      : (host?: string) => Promise<Permission[]>
+  bulk_set_permissions  : (rules: Permission[]) => Promise<void>
+  revoke_all_for_app    : (host: string) => Promise<void>
+}

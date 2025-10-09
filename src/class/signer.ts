@@ -1,5 +1,4 @@
 import { get_event_id }   from '@cmdcode/nostr-p2p/lib'
-import { now }            from '@vbyte/micro-lib/util'
 import { BifrostNode }    from '@frostr/bifrost'
 import { convert_pubkey } from '@frostr/bifrost/util'
 import * as cipher        from '@/lib/cipher.js'

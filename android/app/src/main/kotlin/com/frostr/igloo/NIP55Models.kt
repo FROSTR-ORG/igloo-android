@@ -14,6 +14,7 @@ data class NIP55Request(
     val type: String,
     val params: Map<String, String> = emptyMap(),
     val callingApp: String,
+    val timestamp: Long = System.currentTimeMillis(),
     val replyIntent: android.app.PendingIntent? = null
 )
 
@@ -23,6 +24,8 @@ data class NIP55Request(
 data class NIP55Result(
     val ok: Boolean,
     val type: String,
+    val id: String? = null,
     val result: String? = null,
+    val reason: String? = null,
     val error: String? = null
 )

@@ -206,15 +206,25 @@ class ModernCameraBridge(
         try {
             // Bind to lifecycle (assuming context is LifecycleOwner)
             if (context is LifecycleOwner) {
-                provider.bindToLifecycle(context, cameraSelector, preview)
+                // MUST run on main thread - @JavascriptInterface methods run on background thread
+                webView.post {
+                    try {
+                        // Unbind all existing use cases first to prevent "too many use cases" error
+                        provider.unbindAll()
 
-                // Store session
-                val session = CameraSession(sessionId, "camerax", Size(1280, 720))
-                activeSessions[sessionId] = session
+                        provider.bindToLifecycle(context, cameraSelector, preview)
 
-                // Notify success
-                notifyStreamReady(sessionId)
-                Log.d(TAG, "CameraX session created successfully: $sessionId")
+                        // Store session
+                        val session = CameraSession(sessionId, "camerax", Size(1280, 720))
+                        activeSessions[sessionId] = session
+
+                        // Notify success
+                        notifyStreamReady(sessionId)
+                        Log.d(TAG, "CameraX session created successfully: $sessionId")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to bind camera on main thread", e)
+                    }
+                }
             } else {
                 throw Exception("Context is not a LifecycleOwner")
             }

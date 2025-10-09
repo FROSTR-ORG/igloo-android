@@ -4,7 +4,7 @@ import type {
   SharePackage
 } from '@frostr/bifrost'
 
-import type { Permission } from './prompt.js'
+import type { Permission } from './permissions.js'
 
 export interface RelayPolicy {
   url   : string

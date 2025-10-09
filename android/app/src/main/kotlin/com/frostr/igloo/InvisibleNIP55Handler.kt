@@ -21,19 +21,20 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.frostr.igloo.bridges.StorageBridge
+import com.frostr.igloo.NIP55PermissionDialog.PermissionStorage
 
 /**
  * Invisible NIP-55 Intent Handler - Minimal Routing Layer
  *
- * This is now a thin routing layer that:
- * 1. Receives NIP-55 intents from external apps
+ * This is a thin routing layer that:
+ * 1. Receives NIP-55 intents from external apps via nostrsigner:// URI scheme
  * 2. Parses and validates the request
- * 3. Binds to IglooBackgroundService
- * 4. Forwards request to service for processing
- * 5. Returns result to calling app
+ * 3. Checks permissions and determines if user prompt is needed
+ * 4. Routes to MainActivity for signing execution
+ * 5. Returns result to calling app via setResult()
  *
- * The heavy lifting (PWA loading, crypto operations) happens in IglooBackgroundService.
- * This handler is just responsible for the IPC boundary between external apps and our service.
+ * The heavy lifting (PWA loading, crypto operations) happens in MainActivity.
+ * This handler is just responsible for the IPC boundary between external apps and MainActivity.
  */
 class InvisibleNIP55Handler : Activity() {
     companion object {
@@ -41,7 +42,17 @@ class InvisibleNIP55Handler : Activity() {
         private const val REQUEST_TIMEOUT_MS = 30000L // 30 seconds
         private const val SERVICE_BIND_TIMEOUT_MS = 5000L // 5 seconds
         private const val PROMPT_RESULT_TIMEOUT_MS = 60000L // 60 seconds for user interaction
+        private const val BATCH_DELAY_MS = 150L // Wait 150ms to collect concurrent requests for batching
     }
+
+    // Data class to track completed results
+    private data class CompletedResult(
+        val requestId: String,
+        val requestType: String,
+        val callingApp: String,
+        val result: String?,
+        val error: String?
+    )
 
     private val gson = Gson()
     private val handlerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -50,17 +61,129 @@ class InvisibleNIP55Handler : Activity() {
     private var isCompleted = false
     private lateinit var originalRequest: NIP55Request
 
+    // Request queue - allows multiple concurrent requests without state corruption
+    private val pendingRequests = mutableListOf<NIP55Request>()
+    private var isProcessingRequest = false
+    private var isMainActivityLaunched = false  // Track if MainActivity is already launched for this queue
+
+    // Batch result processing - collect results and return them all at once
+    private val completedResults = mutableListOf<CompletedResult>()
+    private var batchTimer: Runnable? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        Log.d(TAG, "NIP-55 request received from external app")
+        Log.d(TAG, "NIP-55 request received from external app (onCreate)")
+        processNIP55Intent(intent)
+    }
 
+    override fun onNewIntent(newIntent: Intent?) {
+        super.onNewIntent(newIntent)
+
+        if (newIntent == null) {
+            Log.w(TAG, "onNewIntent called with null intent")
+            return
+        }
+
+        Log.d(TAG, "NIP-55 request received from external app (onNewIntent)")
+        Log.d(TAG, "State before reset: isProcessingRequest=$isProcessingRequest, isCompleted=$isCompleted, queueSize=${pendingRequests.size}")
+
+        // Only reset isProcessingRequest if queue is empty (fresh batch of requests)
+        // If queue has items, we're in the middle of processing - don't reset
+        if (pendingRequests.isEmpty()) {
+            isProcessingRequest = false
+            isCompleted = false
+            Log.d(TAG, "State reset for new batch of requests")
+        } else {
+            // Queue is active - only reset completion flag for new request
+            isCompleted = false
+            Log.d(TAG, "Queue is active - not resetting isProcessingRequest")
+        }
+
+        // Update the activity's intent
+        setIntent(newIntent)
+        processNIP55Intent(newIntent)
+    }
+
+    private fun processNIP55Intent(intent: Intent) {
         try {
             // Parse NIP-55 request
-            originalRequest = parseNIP55Request(intent)
+            val newRequest = parseNIP55Request(intent)
 
-            Log.d(TAG, "Parsed NIP-55 request: ${originalRequest.type} from ${originalRequest.callingApp}")
+            Log.d(TAG, "Received NIP-55 request: ${newRequest.type} (id=${newRequest.id}) from ${newRequest.callingApp}")
 
+            // Deduplicate by event content (for sign_event, use event id from params)
+            val isDuplicate = if (newRequest.type == "sign_event" && newRequest.params.containsKey("event")) {
+                try {
+                    val eventJson = newRequest.params["event"]
+                    val eventMap = gson.fromJson(eventJson, Map::class.java)
+                    val eventId = eventMap["id"] as? String
+
+                    // Check if we already have this event id in queue
+                    pendingRequests.any { req ->
+                        if (req.type == "sign_event" && req.params.containsKey("event")) {
+                            try {
+                                val existingEventJson = req.params["event"]
+                                val existingEventMap = gson.fromJson(existingEventJson, Map::class.java)
+                                val existingEventId = existingEventMap["id"] as? String
+                                existingEventId == eventId
+                            } catch (e: Exception) {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to extract event id for deduplication", e)
+                    false
+                }
+            } else {
+                // For non-sign_event, use request ID
+                pendingRequests.any { it.id == newRequest.id }
+            }
+
+            if (isDuplicate) {
+                Log.w(TAG, "Ignoring duplicate request (event already in queue)")
+                return
+            }
+
+            // Add to queue
+            pendingRequests.add(newRequest)
+            Log.d(TAG, "Request queued. Queue size: ${pendingRequests.size}")
+
+            // Process next request if not already processing one
+            processNextRequest()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse NIP-55 request", e)
+            returnError("Failed to parse request: ${e.message}")
+            finish()
+        }
+    }
+
+    /**
+     * Process the next request in the queue
+     */
+    private fun processNextRequest() {
+        // Don't start processing if already processing or no requests in queue
+        if (isProcessingRequest) {
+            Log.d(TAG, "processNextRequest: Already processing a request, skipping")
+            return
+        }
+        if (pendingRequests.isEmpty()) {
+            Log.d(TAG, "processNextRequest: Queue is empty, nothing to process")
+            return
+        }
+
+        // Mark as processing
+        isProcessingRequest = true
+
+        // Get the first request from queue
+        originalRequest = pendingRequests.first()
+        Log.d(TAG, "Processing queued request: ${originalRequest.type} (id=${originalRequest.id})")
+
+        try {
             // Special handling for get_public_key with bulk permissions
             if (originalRequest.type == "get_public_key" && originalRequest.params.containsKey("permissions")) {
                 Log.d(TAG, "get_public_key with bulk permissions - showing native dialog")
@@ -81,6 +204,7 @@ class InvisibleNIP55Handler : Activity() {
                 "allowed" -> {
                     // Permission already granted - execute signing directly via MainActivity
                     Log.d(TAG, "Permission allowed - delegating to MainActivity for fast signing")
+
                     launchMainActivityForFastSigning()
                     return
                 }
@@ -93,63 +217,179 @@ class InvisibleNIP55Handler : Activity() {
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse NIP-55 request", e)
-            returnError("Failed to parse request: ${e.message}")
-            finish()
+            Log.e(TAG, "Failed to process request", e)
+            returnError("Failed to process request: ${e.message}")
         }
     }
 
 
     /**
-     * Return successful result to calling app
+     * Return successful result to calling app (with batching support)
      */
     private fun returnResult(result: String) {
+        // Add to completed results
+        completedResults.add(CompletedResult(
+            requestId = originalRequest.id,
+            requestType = originalRequest.type,
+            callingApp = originalRequest.callingApp,
+            result = result,
+            error = null
+        ))
+
+        // Remove completed request from queue
+        pendingRequests.removeAll { it.id == originalRequest.id }
+        isProcessingRequest = false
+        Log.d(TAG, "✓ Fast signing completed")
+        Log.d(TAG, "Request completed. Pending: ${pendingRequests.size}, Completed: ${completedResults.size}")
+
+        // Schedule batch return or process next request
+        scheduleBatchReturn()
+    }
+
+    /**
+     * Return error result to calling app (with batching support)
+     */
+    private fun returnError(error: String) {
+        // Add to completed results
+        completedResults.add(CompletedResult(
+            requestId = if (::originalRequest.isInitialized) originalRequest.id else "unknown",
+            requestType = if (::originalRequest.isInitialized) originalRequest.type else "unknown",
+            callingApp = if (::originalRequest.isInitialized) originalRequest.callingApp else "unknown",
+            result = null,
+            error = error
+        ))
+
+        // Remove completed request from queue
+        if (::originalRequest.isInitialized) {
+            pendingRequests.removeAll { it.id == originalRequest.id }
+        }
+        isProcessingRequest = false
+        Log.d(TAG, "✗ Fast signing failed: $error")
+        Log.d(TAG, "Request failed. Pending: ${pendingRequests.size}, Completed: ${completedResults.size}")
+
+        // Schedule batch return or process next request
+        scheduleBatchReturn()
+    }
+
+    /**
+     * Schedule batch return with delay to collect concurrent requests
+     */
+    private fun scheduleBatchReturn() {
+        // Cancel any existing timer
+        batchTimer?.let { timeoutHandler.removeCallbacks(it) }
+
+        // Check if there are more pending requests
+        if (pendingRequests.isNotEmpty()) {
+            Log.d(TAG, "Processing next request in queue (${pendingRequests.size} remaining)")
+            // Reset completion flag and process next request
+            isCompleted = false
+            processNextRequest()
+
+            // Schedule batch return after delay to collect more results
+            batchTimer = Runnable {
+                returnBatchResults()
+            }
+            timeoutHandler.postDelayed(batchTimer!!, BATCH_DELAY_MS)
+        } else {
+            // No more pending requests - return all accumulated results now
+            Log.d(TAG, "Queue empty - returning batch of ${completedResults.size} results")
+            returnBatchResults()
+        }
+    }
+
+    /**
+     * Return all accumulated results as a batch to calling app
+     */
+    private fun returnBatchResults() {
         if (isCompleted) return
         isCompleted = true
 
+        // Cancel batch timer if still scheduled
+        batchTimer?.let { timeoutHandler.removeCallbacks(it) }
+
+        if (completedResults.isEmpty()) {
+            Log.w(TAG, "No results to return")
+            finish()
+            return
+        }
+
+        Log.d(TAG, "Returning RESULT_OK to calling app with ${completedResults.size} results")
+
+        // Build results JSON array like Amber does
+        val resultsArray = org.json.JSONArray()
+        var hasError = false
+
+        for (completed in completedResults) {
+            val resultObj = org.json.JSONObject().apply {
+                put("id", completed.requestId)
+                if (completed.error != null) {
+                    put("error", completed.error)
+                    hasError = true
+                } else if (completed.result != null) {
+                    // Return correct fields per NIP-55 spec based on request type
+                    when (completed.requestType) {
+                        "sign_event" -> {
+                            // sign_event: return 'result' (signature) and 'event' (signed event JSON)
+                            put("result", completed.result)
+                            put("signature", completed.result)
+                            put("event", completed.result)
+                        }
+                        else -> {
+                            // get_public_key and others: return only 'result'
+                            put("result", completed.result)
+                        }
+                    }
+                }
+            }
+            resultsArray.put(resultObj)
+        }
+
+        // Create result intent
         val resultIntent = Intent().apply {
-            // Match Amber's implementation exactly - set all extras for compatibility
-            putExtra("signature", result)
-            putExtra("result", result)
-            putExtra("id", originalRequest.id)
-
-            // For sign_event, include the SIGNED event (not unsigned)
-            // Amethyst checks 'event' field first, so it must contain the signed event
-            if (originalRequest.type == "sign_event") {
-                putExtra("event", result) // Use signed event from result
-            }
-
-            // For get_public_key, include package name
-            if (originalRequest.type == "get_public_key") {
-                putExtra("package", packageName)
+            // Use "results" array for batch (Amber-compatible format)
+            if (completedResults.size > 1) {
+                putExtra("results", resultsArray.toString())
+                Log.d(TAG, "Batch return format: results array with ${completedResults.size} items")
+            } else {
+                // Single result - use individual fields for compatibility
+                val single = completedResults[0]
+                putExtra("id", single.requestId)
+                // Return Igloo's package name (not the calling app's) so Amethyst knows which signer app to use for future requests
+                putExtra("package", "com.frostr.igloo")
+                if (single.error != null) {
+                    putExtra("error", single.error)
+                } else if (single.result != null) {
+                    // Return correct fields per NIP-55 spec based on request type
+                    when (single.requestType) {
+                        "sign_event" -> {
+                            // sign_event: return 'result' (signature) and 'event' (signed event JSON)
+                            putExtra("result", single.result)
+                            putExtra("signature", single.result)
+                            putExtra("event", single.result)
+                        }
+                        else -> {
+                            // get_public_key and others: return only 'result'
+                            putExtra("result", single.result)
+                        }
+                    }
+                }
+                Log.d(TAG, "Single result format: individual fields (type=${single.requestType}, package=$packageName)")
             }
         }
 
-        Log.d(TAG, "Returning RESULT_OK to calling app:")
-        Log.d(TAG, "  - Request type: ${originalRequest.type}")
-        Log.d(TAG, "  - Result value: $result")
-        Log.d(TAG, "  - Calling app: ${originalRequest.callingApp}")
-        Log.d(TAG, "  - Result code: ${android.app.Activity.RESULT_OK}")
-        Log.d(TAG, "  - Intent extras:")
-        resultIntent.extras?.let { bundle ->
-            for (key in bundle.keySet()) {
-                Log.d(TAG, "      $key = ${bundle.get(key)}")
-            }
-        }
-        setResult(RESULT_OK, resultIntent)
-
-        // Android automatically returns to calling activity when we finish()
-        // DO NOT manually launch the calling app - it interferes with result delivery
+        setResult(if (hasError) RESULT_CANCELED else RESULT_OK, resultIntent)
+        isMainActivityLaunched = false  // Reset for next batch of requests
         finish()
     }
 
     /**
-     * Return error result to calling app
+     * Legacy single-result return (kept for non-batched code paths)
      */
-    private fun returnError(error: String) {
+    private fun returnSingleResultLegacy(error: String) {
         if (isCompleted) return
         isCompleted = true
 
+        // Direct Intent request - reply via setResult
         val resultIntent = Intent().apply {
             putExtra("error", error)
             putExtra("id", if (::originalRequest.isInitialized) originalRequest.id else "unknown")
@@ -157,7 +397,19 @@ class InvisibleNIP55Handler : Activity() {
 
         Log.d(TAG, "Returning RESULT_CANCELED: $error")
         setResult(RESULT_CANCELED, resultIntent)
-        finish()
+
+        // Check if there are more requests in queue
+        if (pendingRequests.isNotEmpty()) {
+            Log.d(TAG, "Processing next request in queue after error (${pendingRequests.size} remaining)")
+            // Reset completion flag and process next request
+            isCompleted = false
+            processNextRequest()
+        } else {
+            // No more requests - finish and return to calling app
+            Log.d(TAG, "Queue empty after error - finishing InvisibleNIP55Handler")
+            isMainActivityLaunched = false  // Reset for next batch of requests
+            finish()
+        }
     }
 
     /**
@@ -166,6 +418,8 @@ class InvisibleNIP55Handler : Activity() {
     private fun cleanup() {
         timeoutHandler.removeCallbacksAndMessages(null)
         handlerScope.cancel()
+        // Stop foreground service
+        NIP55SigningService.stop(this)
     }
 
     override fun onDestroy() {
@@ -191,37 +445,30 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("permissions_json", permissionsJson)
             putExtra("is_bulk", true)
             putExtra("request_id", originalRequest.id)
+            // Include full request data so MainActivity can execute signing after approval
+            putExtra("nip55_request_id", originalRequest.id)
+            putExtra("nip55_request_type", originalRequest.type)
+            putExtra("nip55_request_params", gson.toJson(originalRequest.params))
+            putExtra("nip55_request_calling_app", originalRequest.callingApp)
+            // Pass the reply intent
+            val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            putExtra("reply_pending_intent", replyIntent)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        // Register callback for dialog result
+        // Register callback for signing result (MainActivity will execute signing after permission approval)
         PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
             override fun onResult(result: NIP55Result) {
+                // MainActivity already executed the signing operation or user denied permission
+                // Just forward the result to Amethyst
                 if (result.ok) {
-                    // Permission was approved - now get the public key
-                    Log.d(TAG, "Permission approved - proceeding with get_public_key")
-
-                    // Launch MainActivity to execute get_public_key
-                    // Permissions are now saved, so this will proceed normally
-                    val mainIntent = Intent(this@InvisibleNIP55Handler, MainActivity::class.java).apply {
-                        action = "com.frostr.igloo.NIP55_SIGNING"
-                        putExtra("nip55_request_id", originalRequest.id)
-                        putExtra("nip55_request_type", originalRequest.type)
-                        putExtra("nip55_request_calling_app", originalRequest.callingApp)
-                        putExtra("nip55_request_params", gson.toJson(originalRequest.params))
-                        putExtra("nip55_show_prompt", false)
-                        // Pass the reply intent from the original request
-                        val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
-                        putExtra("reply_pending_intent", replyIntent)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-
-                    startActivity(mainIntent)
-                    finish()
+                    Log.d(TAG, "Signing completed successfully after permission approval")
+                    returnResult(result.result ?: "")
                 } else {
-                    returnError(result.reason ?: "User denied permissions")
-                    cleanup()
+                    Log.d(TAG, "Signing failed or permission denied: ${result.reason}")
+                    returnError(result.reason ?: "User denied permission")
                 }
+                cleanup()
             }
         })
 
@@ -235,6 +482,9 @@ class InvisibleNIP55Handler : Activity() {
         }, PROMPT_RESULT_TIMEOUT_MS)
 
         startActivity(dialogIntent)
+        // Stay alive to receive callback and return result to Amethyst
+        // No need to call moveTaskToBack - MainActivity will automatically come to foreground
+        // and when we finish(), Android will automatically return to the calling app
     }
 
     /**
@@ -262,37 +512,30 @@ class InvisibleNIP55Handler : Activity() {
             eventKind?.let { putExtra("event_kind", it) }
             putExtra("is_bulk", false)
             putExtra("request_id", originalRequest.id)
+            // Include full request data so MainActivity can execute signing after approval
+            putExtra("nip55_request_id", originalRequest.id)
+            putExtra("nip55_request_type", originalRequest.type)
+            putExtra("nip55_request_params", gson.toJson(originalRequest.params))
+            putExtra("nip55_request_calling_app", originalRequest.callingApp)
+            // Pass the reply intent
+            val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            putExtra("reply_pending_intent", replyIntent)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        // Register callback for dialog result
+        // Register callback for signing result (MainActivity will execute signing after permission approval)
         PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
             override fun onResult(result: NIP55Result) {
+                // MainActivity already executed the signing operation or user denied permission
+                // Just forward the result to Amethyst
                 if (result.ok) {
-                    // Permission was approved - now execute the operation
-                    Log.d(TAG, "Permission approved - proceeding with ${originalRequest.type}")
-
-                    // Launch MainActivity to execute the operation
-                    // Permissions are now saved, so this will proceed normally
-                    val mainIntent = Intent(this@InvisibleNIP55Handler, MainActivity::class.java).apply {
-                        action = "com.frostr.igloo.NIP55_SIGNING"
-                        putExtra("nip55_request_id", originalRequest.id)
-                        putExtra("nip55_request_type", originalRequest.type)
-                        putExtra("nip55_request_calling_app", originalRequest.callingApp)
-                        putExtra("nip55_request_params", gson.toJson(originalRequest.params))
-                        putExtra("nip55_show_prompt", false)
-                        // Pass the reply intent from the original request
-                        val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
-                        putExtra("reply_pending_intent", replyIntent)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-
-                    startActivity(mainIntent)
-                    finish()
+                    Log.d(TAG, "Signing completed successfully after permission approval")
+                    returnResult(result.result ?: "")
                 } else {
+                    Log.d(TAG, "Signing failed or permission denied: ${result.reason}")
                     returnError(result.reason ?: "User denied permission")
-                    cleanup()
                 }
+                cleanup()
             }
         })
 
@@ -306,31 +549,17 @@ class InvisibleNIP55Handler : Activity() {
         }, PROMPT_RESULT_TIMEOUT_MS)
 
         startActivity(dialogIntent)
+        // Stay alive to receive callback and return result to Amethyst
+        // No need to call moveTaskToBack - MainActivity will automatically come to foreground
+        // and when we finish(), Android will automatically return to the calling app
     }
 
     /**
-     * Launch MainActivity for fast signing (no prompt, permission already allowed)
-     * Optimized for speed with minimal visual disruption
+     * Send request to MainActivity via singleton bridge
+     * For background signing, MainActivity stays in background and signs invisibly
      */
     private fun launchMainActivityForFastSigning() {
-        Log.d(TAG, "Launching MainActivity for fast signing (no prompt)")
-
-        // Register callback to receive result from MainActivity
-        PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
-            override fun onResult(result: NIP55Result) {
-                Log.d(TAG, "Received fast signing result: ok=${result.ok}")
-
-                if (result.ok && result.result != null) {
-                    Log.d(TAG, "✓ Fast signing completed")
-                    returnResult(result.result)
-                } else {
-                    Log.d(TAG, "✗ Fast signing failed: ${result.reason}")
-                    returnError(result.reason ?: "Signing failed")
-                }
-
-                cleanup()
-            }
-        })
+        Log.d(TAG, "Sending request to MainActivity via singleton bridge")
 
         // Set timeout for signing operation
         timeoutHandler.postDelayed({
@@ -342,22 +571,46 @@ class InvisibleNIP55Handler : Activity() {
             }
         }, REQUEST_TIMEOUT_MS)
 
-        // Launch MainActivity with optimized flags for fast signing
-        val mainIntent = Intent(this, MainActivity::class.java).apply {
-            action = "com.frostr.igloo.NIP55_SIGNING"
-            putExtra("nip55_request_id", originalRequest.id)
-            putExtra("nip55_request_type", originalRequest.type)
-            putExtra("nip55_request_calling_app", originalRequest.callingApp)
-            putExtra("nip55_request_params", gson.toJson(originalRequest.params))
-            putExtra("nip55_permission_status", "allowed")
-            putExtra("nip55_show_prompt", false) // Skip prompt UI
+        // Send request via bridge
+        NIP55RequestBridge.sendRequest(originalRequest) { result ->
+            Log.d(TAG, "Received fast signing result: ok=${result.ok}")
 
-            // Proper flags for singleTask activity: reuse existing instance
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (result.ok && result.result != null) {
+                Log.d(TAG, "✓ Fast signing completed")
+                returnResult(result.result)
+            } else {
+                Log.d(TAG, "✗ Fast signing failed: ${result.reason}")
+                returnError(result.reason ?: "Signing failed")
+            }
+
+            cleanup()
+        }
+
+        // DON'T launch MainActivity - it should sign in background
+        // The bridge will deliver the request when MainActivity is active
+        // If MainActivity is paused, it will process when it resumes
+    }
+
+    /**
+     * Bring MainActivity to foreground (will process queued requests via bridge when it resumes)
+     */
+    private fun launchMainActivityToForeground() {
+        Log.d(TAG, "Bringing MainActivity to foreground")
+
+        // Start foreground service
+        if (!isMainActivityLaunched) {
+            NIP55SigningService.start(this)
+            isMainActivityLaunched = true
+        }
+
+        // Simple intent to bring MainActivity to foreground
+        // No extras needed - requests are already queued in the bridge
+        val mainIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
 
         startActivity(mainIntent)
-        Log.d(TAG, "MainActivity launched for fast signing")
+        Log.d(TAG, "MainActivity launch requested - bridge will deliver queued requests on resume")
     }
 
     /**
@@ -365,6 +618,9 @@ class InvisibleNIP55Handler : Activity() {
      */
     private fun launchMainActivityForPrompt() {
         Log.d(TAG, "Launching MainActivity for prompt using result registry")
+
+        // Start foreground service to keep process alive while waiting for result
+        NIP55SigningService.start(this)
 
         // Register callback to receive result from MainActivity (cross-task safe)
         PendingNIP55ResultRegistry.registerCallback(originalRequest.id, object : PendingNIP55ResultRegistry.ResultCallback {
@@ -407,8 +663,10 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("nip55_permission_status", permissionStatus)
             putExtra("nip55_show_prompt", permissionStatus == "prompt_required")
 
-            // Proper flags for singleTask activity: reuse existing instance
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // For launching from transparent activity in another task:
+            // - FLAG_ACTIVITY_NEW_TASK: Required to start activity from non-activity context
+            // - FLAG_ACTIVITY_CLEAR_TOP: Ensures existing MainActivity instance receives onNewIntent
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
 
         startActivity(mainIntent)
@@ -588,8 +846,9 @@ class InvisibleNIP55Handler : Activity() {
             val permissionsJson = storageBridge.getItem("local", "nip55_permissions_v2")
                 ?: return "prompt_required"
 
-            val permissionListType = object : com.google.gson.reflect.TypeToken<Array<Permission>>() {}.type
-            val permissions: Array<Permission> = gson.fromJson<Array<Permission>>(permissionsJson, permissionListType)
+            // Parse JSON storage wrapper and extract permissions array
+            val storage = gson.fromJson(permissionsJson, PermissionStorage::class.java)
+            val permissions = storage.permissions
 
             // Extract event kind for sign_event requests
             var eventKind: Int? = null
@@ -648,9 +907,6 @@ class InvisibleNIP55Handler : Activity() {
         }
     }
 
-    // NOTE: Background service signing code removed
-    // Background signing isn't possible anyway, so IglooBackgroundService was deleted
-    // All signing now happens through MainActivity with user present
 
     // ========== Focus Management ==========
 
@@ -673,4 +929,4 @@ class InvisibleNIP55Handler : Activity() {
     }
 }
 
-// NIP55Request, NIP55Result, and Permission data classes are defined in IglooBackgroundService.kt
+// NIP55Request, NIP55Result, and Permission data classes are defined in MainActivity.kt

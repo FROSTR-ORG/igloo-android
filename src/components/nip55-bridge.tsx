@@ -1,6 +1,6 @@
 import { useEffect, useState }   from 'react'
 import { useBifrostNode }        from '@/context/node.js'
-import { create_signing_bridge, executeAutoSigning, requestManualPrompt } from '@/lib/signer.js'
+import { create_signing_bridge, executeAutoSigning } from '@/lib/signer.js'
 
 import type { ReactElement } from 'react'
 import type { NIP55Bridge } from '@/types/bridge.js'
@@ -29,8 +29,7 @@ export function NIP55Bridge(): ReactElement | null {
         const bridge: NIP55Bridge = {
           ready: true,
           nodeClient: node.client || null,  // May be null when locked
-          autoSign: executeAutoSigning,
-          requestManualPrompt: requestManualPrompt
+          autoSign: executeAutoSigning
         }
 
         // Expose clean interface on window.nostr

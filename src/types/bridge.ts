@@ -14,9 +14,6 @@ export interface NIP55Bridge {
 
   /** Execute automatic signing without user interaction */
   autoSign: (request: NIP55Request) => Promise<NIP55Result>
-
-  /** Request manual user prompt for signing */
-  requestManualPrompt: (request: NIP55Request) => Promise<NIP55Result>
 }
 
 /**

@@ -78,6 +78,7 @@ class NIP55PermissionDialog : DialogFragment() {
     private val gson = Gson()
     private var callback: PermissionCallback? = null
     private var rememberChoice = false
+    private val selectedPermissions = mutableMapOf<String, Boolean>() // key: "type:kind", value: selected
 
     interface PermissionCallback {
         fun onApproved()
@@ -173,7 +174,7 @@ class NIP55PermissionDialog : DialogFragment() {
             val permissions: List<Map<String, Any>> = gson.fromJson(permissionsJson, listType)
 
             layout.addView(TextView(context).apply {
-                text = "This app is requesting the following permissions:"
+                text = "Select permissions to grant:"
                 textSize = 14f
                 setPadding(0, 0, 0, 16)
             })
@@ -181,10 +182,13 @@ class NIP55PermissionDialog : DialogFragment() {
             permissions.forEach { perm ->
                 val type = perm["type"] as? String ?: "unknown"
                 val kind = (perm["kind"] as? Double)?.toInt()
+                val permKey = "$type:${kind ?: "null"}"
 
-                layout.addView(TextView(context).apply {
+                // Initialize as selected by default
+                selectedPermissions[permKey] = true
+
+                layout.addView(CheckBox(context).apply {
                     text = buildString {
-                        append("• ")
                         append(getHumanReadableName(type))
                         if (kind != null) {
                             append(" (")
@@ -194,6 +198,10 @@ class NIP55PermissionDialog : DialogFragment() {
                     }
                     textSize = 14f
                     setPadding(16, 4, 0, 4)
+                    isChecked = true // All permissions selected by default
+                    setOnCheckedChangeListener { _, isChecked ->
+                        selectedPermissions[permKey] = isChecked
+                    }
                 })
             }
         } catch (e: Exception) {
@@ -209,8 +217,10 @@ class NIP55PermissionDialog : DialogFragment() {
         Log.d(TAG, "User approved permissions for $appId (remember: $rememberChoice)")
 
         if (rememberChoice) {
+            // Save permissions permanently to localStorage
             savePermissions(appId, isBulk, allowed = true)
         }
+        // If rememberChoice is false, don't save - just approve this one request
 
         callback?.onApproved()
     }
@@ -235,7 +245,7 @@ class NIP55PermissionDialog : DialogFragment() {
             val permissions = storage.permissions.toMutableList()
 
             if (isBulk) {
-                // Save bulk permissions
+                // Save bulk permissions - only save selected ones
                 val permissionsJson = arguments?.getString(ARG_PERMISSIONS_JSON) ?: "[]"
                 val listType = object : TypeToken<List<Map<String, Any>>>() {}.type
                 val requestedPerms: List<Map<String, Any>> = gson.fromJson(permissionsJson, listType)
@@ -243,18 +253,28 @@ class NIP55PermissionDialog : DialogFragment() {
                 requestedPerms.forEach { perm ->
                     val type = perm["type"] as? String ?: return@forEach
                     val kind = (perm["kind"] as? Double)?.toInt()
+                    val permKey = "$type:${kind ?: "null"}"
 
-                    // Remove existing permission
-                    permissions.removeAll { it.appId == appId && it.type == type && it.kind == kind }
+                    // Only save if this permission was selected (or if denying, save all as denied)
+                    val shouldSave = if (allowed) {
+                        selectedPermissions[permKey] == true
+                    } else {
+                        true // When denying, save all as denied
+                    }
 
-                    // Add new permission
-                    permissions.add(Permission(
-                        appId = appId,
-                        type = type,
-                        kind = kind,
-                        allowed = allowed,
-                        timestamp = System.currentTimeMillis()
-                    ))
+                    if (shouldSave) {
+                        // Remove existing permission
+                        permissions.removeAll { it.appId == appId && it.type == type && it.kind == kind }
+
+                        // Add new permission
+                        permissions.add(Permission(
+                            appId = appId,
+                            type = type,
+                            kind = kind,
+                            allowed = allowed,
+                            timestamp = System.currentTimeMillis()
+                        ))
+                    }
                 }
             } else {
                 // Save single permission
