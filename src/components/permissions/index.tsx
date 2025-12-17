@@ -1,5 +1,7 @@
 import { useState, useEffect }      from 'react'
 import { usePermissions } from '@/context/permissions.js'
+import { getEventKindLabel } from '@/lib/permissions.js'
+import '@/styles/permissions.css'
 
 import type { ReactElement } from 'react'
 import type { Permission }   from '@/types/permissions.js'
@@ -33,9 +35,11 @@ export function PermissionsView(): ReactElement {
 
   const handle_revoke_permission = async (permission: Permission) => {
     try {
-      await permissions_api.revoke_permission(permission.appId, permission.type)
+      // IMPORTANT: Pass the kind parameter to properly match kind-specific permissions
+      await permissions_api.revoke_permission(permission.appId, permission.type, permission.kind)
       await load_permissions() // Refresh the list
-      console.log(`Removed permission: ${permission.appId}:${permission.type}`)
+      const kindStr = permission.kind !== undefined ? `:${permission.kind}` : ''
+      console.log(`Removed permission: ${permission.appId}:${permission.type}${kindStr}`)
     } catch (error) {
       console.error('Failed to remove permission:', error)
     }
@@ -44,9 +48,9 @@ export function PermissionsView(): ReactElement {
   const handle_clear_all_permissions = async () => {
     if (window.confirm('Clear all saved permissions? Apps will prompt again for future requests.')) {
       try {
-        // Remove all permissions one by one
+        // Remove all permissions one by one with proper kind parameter
         for (const permission of permissions) {
-          await permissions_api.revoke_permission(permission.appId, permission.type)
+          await permissions_api.revoke_permission(permission.appId, permission.type, permission.kind)
         }
         await load_permissions()
         console.log('All permissions cleared')
@@ -147,12 +151,17 @@ export function PermissionsView(): ReactElement {
             </div>
 
             {filtered_permissions.map((permission, index) => (
-              <div key={`${permission.appId}-${permission.type}-${index}`} className="table-row">
+              <div key={`${permission.appId}-${permission.type}-${permission.kind}-${index}`} className="table-row">
                 <span className="app-host" title={format_app_host(permission.appId)}>
                   {format_app_host(permission.appId)}
                 </span>
                 <span className="operation-type">
                   {format_operation_type(permission.type)}
+                  {permission.kind !== undefined && (
+                    <span className="event-kind" title={`Event Kind ${permission.kind}`}>
+                      {getEventKindLabel(permission.kind)}
+                    </span>
+                  )}
                 </span>
                 <span className={`permission-status ${permission.allowed ? 'allowed' : 'denied'}`}>
                   {permission.allowed ? '✅ Allowed' : '❌ Denied'}

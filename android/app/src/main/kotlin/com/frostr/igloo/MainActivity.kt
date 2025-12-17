@@ -4,10 +4,12 @@ import androidx.appcompat.app.AppCompatActivity
 import android.app.PendingIntent
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -118,6 +120,8 @@ class MainActivity : AppCompatActivity() {
             "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request - showing native dialog")
+                // Dismiss keyboard immediately - it may be open from the calling app
+                dismissKeyboard()
                 NIP55DebugLogger.logIntent("PERMISSION_DIALOG", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString()
@@ -145,7 +149,18 @@ class MainActivity : AppCompatActivity() {
                 handleNIP55Request()
             }
             else -> {
-                NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
+                // Check if this is a background signing request (from InvisibleNIP55Handler)
+                val isBackgroundSigningRequest = intent.getBooleanExtra("background_signing_request", false)
+                if (isBackgroundSigningRequest) {
+                    val signingType = intent.getStringExtra("signing_request_type") ?: "unknown"
+                    val callingApp = intent.getStringExtra("signing_calling_app") ?: "unknown"
+                    Log.d(TAG, "Background signing startup - showing signing overlay (type=$signingType, app=$callingApp)")
+                    NIP55DebugLogger.logPWABridge("BACKGROUND_SIGNING_STARTUP", "initializePWA")
+                    setupSigningOverlay()
+                    showSigningOverlay()
+                } else {
+                    NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
+                }
                 initializeSecureWebView()
                 loadSecurePWA()
                 handleIntent(intent)
@@ -283,6 +298,9 @@ class MainActivity : AppCompatActivity() {
 
         Log.d(TAG, "Handling permission dialog request: appId=$appId, bulk=$isBulk, requestId=$requestId")
 
+        // Dismiss any open keyboard to ensure the permission dialog is fully visible
+        dismissKeyboard()
+
         // Create appropriate dialog variant
         val dialog = if (isBulk) {
             val permissionsJson = intent.getStringExtra("permissions_json") ?: "[]"
@@ -306,6 +324,11 @@ class MainActivity : AppCompatActivity() {
             override fun onDenied() {
                 Log.d(TAG, "Permission denied - returning error")
                 handleDeniedPermission(requestId)
+            }
+
+            override fun onCancelled() {
+                Log.d(TAG, "Permission dialog cancelled - returning error immediately")
+                handleCancelledPermission(requestId)
             }
         })
 
@@ -357,8 +380,107 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "✗ No callback registered for request: $requestId")
         }
 
-        // Do NOT call finish() - keep MainActivity alive for subsequent NIP-55 requests
-        // With singleTask launchMode, Android will reuse this instance instead of creating new ones
+        // Return focus to the calling app (Amethyst) instead of just going to background
+        returnFocusToCallingApp()
+    }
+
+    /**
+     * Handle cancelled permission dialog - return error immediately
+     * This is called when user dismisses the dialog without making a choice
+     * (back button, touch outside, keyboard close, etc.)
+     */
+    private fun handleCancelledPermission(requestId: String) {
+        val result = NIP55Result(
+            ok = false,
+            type = "permission_cancelled",
+            id = requestId,
+            result = null,
+            reason = "User cancelled permission dialog"
+        )
+
+        val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+        if (delivered) {
+            Log.d(TAG, "✓ Permission cancellation delivered via registry")
+        } else {
+            Log.w(TAG, "✗ No callback registered for request: $requestId")
+        }
+
+        // Return focus to the calling app (Amethyst) instead of just going to background
+        returnFocusToCallingApp()
+    }
+
+    /**
+     * Dismiss any open soft keyboard
+     * Called when activity comes to foreground and before showing permission dialogs
+     * Uses multiple strategies to ensure keyboard is hidden
+     */
+    private fun dismissKeyboard() {
+        try {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+
+            // Strategy 1: Hide from current focus
+            currentFocus?.let { view ->
+                imm.hideSoftInputFromWindow(view.windowToken, 0)
+                Log.d(TAG, "Keyboard dismissed from current focus")
+            }
+
+            // Strategy 2: Hide from decor view (works even if no focus)
+            window.decorView.let { view ->
+                imm.hideSoftInputFromWindow(view.windowToken, 0)
+            }
+
+            // Strategy 3: Toggle soft input off (more aggressive)
+            imm.toggleSoftInput(InputMethodManager.HIDE_IMPLICIT_ONLY, 0)
+
+            // Strategy 4: Delayed dismissal in case window isn't ready yet
+            window.decorView.postDelayed({
+                try {
+                    currentFocus?.let { view ->
+                        imm.hideSoftInputFromWindow(view.windowToken, 0)
+                    }
+                    window.decorView.let { view ->
+                        imm.hideSoftInputFromWindow(view.windowToken, 0)
+                    }
+                } catch (e: Exception) {
+                    // Ignore delayed dismissal errors
+                }
+            }, 100)
+
+            Log.d(TAG, "Keyboard dismissal requested")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to dismiss keyboard: ${e.message}")
+        }
+    }
+
+    /**
+     * Return focus to the calling app after handling a permission request
+     * This ensures we go back to Amethyst instead of the home screen
+     */
+    private fun returnFocusToCallingApp() {
+        try {
+            // Get the calling app from the intent
+            val callingApp = intent.getStringExtra("app_id")
+                ?: intent.getStringExtra("nip55_request_calling_app")
+                ?: intent.getStringExtra("signing_calling_app")
+
+            if (callingApp != null && callingApp != "unknown") {
+                val launchIntent = packageManager.getLaunchIntentForPackage(callingApp)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    startActivity(launchIntent)
+                    Log.d(TAG, "✓ Returned focus to calling app: $callingApp")
+                    return
+                } else {
+                    Log.w(TAG, "Could not get launch intent for: $callingApp")
+                }
+            } else {
+                Log.w(TAG, "No calling app info available, falling back to moveTaskToBack")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to return focus to calling app: ${e.message}")
+        }
+
+        // Fallback: just move to background
         moveTaskToBack(true)
     }
 
@@ -591,6 +713,11 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(signingBridge, "UnifiedSigningBridge")
         Log.d(TAG, "Unified Signing bridge registered")
 
+        // NIP-55 Result Bridge for large result handling (bypasses evaluateJavascript size limits)
+        val nip55ResultBridge = NIP55ContentProvider.getSharedResultBridge()
+        webView.addJavascriptInterface(nip55ResultBridge, "Android_NIP55ResultBridge")
+        Log.d(TAG, "NIP-55 Result Bridge registered")
+
         // IPC server removed - using direct Intent-based communication
         Log.d(TAG, "Direct Intent-based communication enabled")
 
@@ -750,6 +877,8 @@ class MainActivity : AppCompatActivity() {
             "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request in onNewIntent - showing native dialog")
+                // Dismiss keyboard immediately - it may be open from the calling app
+                dismissKeyboard()
                 NIP55DebugLogger.logIntent("PERMISSION_DIALOG_NEW", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString()
@@ -774,6 +903,15 @@ class MainActivity : AppCompatActivity() {
                 handleNIP55Request()
             }
             else -> {
+                // Check if this is a background signing request (from InvisibleNIP55Handler)
+                val isBackgroundSigningRequest = intent.getBooleanExtra("background_signing_request", false)
+                if (isBackgroundSigningRequest) {
+                    val signingType = intent.getStringExtra("signing_request_type") ?: "unknown"
+                    val callingApp = intent.getStringExtra("signing_calling_app") ?: "unknown"
+                    Log.d(TAG, "Background signing in onNewIntent - showing signing overlay (type=$signingType, app=$callingApp)")
+                    setupSigningOverlay()
+                    showSigningOverlay()
+                }
                 handleIntent(intent)
             }
         }
@@ -799,6 +937,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onResume ===")
+
+        // Dismiss any open keyboard immediately when coming to foreground
+        // This ensures keyboard from other apps (like Amethyst) doesn't block our UI
+        dismissKeyboard()
 
         if (::webView.isInitialized) {
             webView.onResume()
@@ -919,11 +1061,10 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "No request ID in resultData - cannot deliver result")
         }
 
-        // Hide signing overlay before returning to background
+        // Hide signing overlay before returning to calling app
         hideSigningOverlay()
 
-        // Do NOT call finish() - keep MainActivity alive for subsequent NIP-55 requests
-        // With singleTask launchMode, Android will reuse this instance instead of creating new ones
-        moveTaskToBack(true)
+        // Return focus to the calling app (Amethyst) instead of just going to background
+        returnFocusToCallingApp()
     }
 }

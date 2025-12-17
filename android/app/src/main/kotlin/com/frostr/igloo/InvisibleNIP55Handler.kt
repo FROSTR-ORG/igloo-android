@@ -112,45 +112,21 @@ class InvisibleNIP55Handler : Activity() {
 
             Log.d(TAG, "Received NIP-55 request: ${newRequest.type} (id=${newRequest.id}) from ${newRequest.callingApp}")
 
-            // Deduplicate by event content (for sign_event, use event id from params)
-            val isDuplicate = if (newRequest.type == "sign_event" && newRequest.params.containsKey("event")) {
-                try {
-                    val eventJson = newRequest.params["event"]
-                    val eventMap = gson.fromJson(eventJson, Map::class.java)
-                    val eventId = eventMap["id"] as? String
-
-                    // Check if we already have this event id in queue
-                    pendingRequests.any { req ->
-                        if (req.type == "sign_event" && req.params.containsKey("event")) {
-                            try {
-                                val existingEventJson = req.params["event"]
-                                val existingEventMap = gson.fromJson(existingEventJson, Map::class.java)
-                                val existingEventId = existingEventMap["id"] as? String
-                                existingEventId == eventId
-                            } catch (e: Exception) {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to extract event id for deduplication", e)
-                    false
-                }
-            } else {
-                // For non-sign_event, use request ID
-                pendingRequests.any { it.id == newRequest.id }
+            // Comprehensive deduplication by operation content
+            val newRequestKey = getDeduplicationKey(newRequest)
+            val isDuplicate = pendingRequests.any { existingRequest ->
+                getDeduplicationKey(existingRequest) == newRequestKey
             }
 
             if (isDuplicate) {
-                Log.w(TAG, "Ignoring duplicate request (event already in queue)")
+                Log.w(TAG, "✗ Ignoring duplicate request: ${newRequest.type} (dedupe_key=$newRequestKey)")
                 return
             }
 
             // Add to queue
             pendingRequests.add(newRequest)
-            Log.d(TAG, "Request queued. Queue size: ${pendingRequests.size}")
+            Log.d(TAG, "✓ Request queued: ${newRequest.type} (dedupe_key=$newRequestKey)")
+            Log.d(TAG, "Queue size: ${pendingRequests.size}")
 
             // Process next request if not already processing one
             processNextRequest()
@@ -159,6 +135,68 @@ class InvisibleNIP55Handler : Activity() {
             Log.e(TAG, "Failed to parse NIP-55 request", e)
             returnError("Failed to parse request: ${e.message}")
             finish()
+        }
+    }
+
+    /**
+     * Generate a deduplication key for a request based on operation content
+     * This prevents duplicate requests with different request IDs from being processed
+     *
+     * Deduplication strategies by operation type:
+     * - sign_event: callingApp + type + event ID (from event JSON)
+     * - nip04_decrypt/nip44_decrypt: callingApp + type + ciphertext + pubkey
+     * - nip04_encrypt/nip44_encrypt: callingApp + type + plaintext + pubkey
+     * - decrypt_zap_event: callingApp + type + event JSON
+     * - get_public_key: callingApp + type
+     */
+    private fun getDeduplicationKey(request: NIP55Request): String {
+        return try {
+            when (request.type) {
+                "sign_event" -> {
+                    // Deduplicate by event ID
+                    val eventJson = request.params["event"]
+                    if (eventJson != null) {
+                        val eventMap = gson.fromJson<Map<String, Any>>(eventJson, Map::class.java)
+                        val eventId = eventMap["id"] as? String
+                        "${request.callingApp}:${request.type}:${eventId ?: eventJson.hashCode()}"
+                    } else {
+                        "${request.callingApp}:${request.type}:${request.id}"
+                    }
+                }
+
+                "nip04_decrypt", "nip44_decrypt" -> {
+                    // Deduplicate by ciphertext + pubkey
+                    val ciphertext = request.params["ciphertext"]
+                    val pubkey = request.params["pubkey"]
+                    "${request.callingApp}:${request.type}:${ciphertext?.hashCode()}:${pubkey}"
+                }
+
+                "nip04_encrypt", "nip44_encrypt" -> {
+                    // Deduplicate by plaintext + pubkey
+                    val plaintext = request.params["plaintext"]
+                    val pubkey = request.params["pubkey"]
+                    "${request.callingApp}:${request.type}:${plaintext?.hashCode()}:${pubkey}"
+                }
+
+                "decrypt_zap_event" -> {
+                    // Deduplicate by event JSON
+                    val eventJson = request.params["event"]
+                    "${request.callingApp}:${request.type}:${eventJson?.hashCode()}"
+                }
+
+                "get_public_key" -> {
+                    // Deduplicate by calling app + type only
+                    "${request.callingApp}:${request.type}"
+                }
+
+                else -> {
+                    // Fallback: use request ID
+                    "${request.callingApp}:${request.type}:${request.id}"
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to generate deduplication key, using request ID", e)
+            "${request.callingApp}:${request.type}:${request.id}"
         }
     }
 
@@ -557,9 +595,21 @@ class InvisibleNIP55Handler : Activity() {
     /**
      * Send request to MainActivity via singleton bridge
      * For background signing, MainActivity stays in background and signs invisibly
+     *
+     * If MainActivity isn't running (WebView not available), launch it to foreground first
      */
     private fun launchMainActivityForFastSigning() {
         Log.d(TAG, "Sending request to MainActivity via singleton bridge")
+
+        // Check if MainActivity WebView is available
+        val webViewAvailable = MainActivity.getWebViewInstance() != null
+
+        if (!webViewAvailable) {
+            Log.d(TAG, "MainActivity WebView not available - launching MainActivity to foreground first")
+            // Start foreground service to keep process alive
+            NIP55SigningService.start(this)
+            isMainActivityLaunched = true
+        }
 
         // Set timeout for signing operation
         timeoutHandler.postDelayed({
@@ -586,9 +636,19 @@ class InvisibleNIP55Handler : Activity() {
             cleanup()
         }
 
-        // DON'T launch MainActivity - it should sign in background
-        // The bridge will deliver the request when MainActivity is active
-        // If MainActivity is paused, it will process when it resumes
+        // If WebView wasn't available, launch MainActivity to foreground
+        // The bridge will deliver the request once MainActivity is ready
+        if (!webViewAvailable) {
+            val mainIntent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                // Signal that this is a background signing request - show signing overlay
+                putExtra("background_signing_request", true)
+                putExtra("signing_request_type", originalRequest.type)
+                putExtra("signing_calling_app", originalRequest.callingApp)
+            }
+            startActivity(mainIntent)
+            Log.d(TAG, "MainActivity launched to foreground for signing - bridge will deliver request when ready")
+        }
     }
 
     /**
@@ -737,7 +797,8 @@ class InvisibleNIP55Handler : Activity() {
 
             "nip04_encrypt", "nip44_encrypt" -> {
                 uri.schemeSpecificPart?.let { params["plaintext"] = it }
-                intent.getStringExtra("pubkey")?.let {
+                // Try both "pubkey" and "pubKey" (Amethyst uses camelCase)
+                (intent.getStringExtra("pubkey") ?: intent.getStringExtra("pubKey"))?.let {
                     validatePublicKey(it)
                     params["pubkey"] = it
                 }
@@ -746,7 +807,8 @@ class InvisibleNIP55Handler : Activity() {
 
             "nip04_decrypt", "nip44_decrypt" -> {
                 uri.schemeSpecificPart?.let { params["ciphertext"] = it }
-                intent.getStringExtra("pubkey")?.let {
+                // Try both "pubkey" and "pubKey" (Amethyst uses camelCase)
+                (intent.getStringExtra("pubkey") ?: intent.getStringExtra("pubKey"))?.let {
                     validatePublicKey(it)
                     params["pubkey"] = it
                 }

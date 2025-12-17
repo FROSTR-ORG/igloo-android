@@ -1,0 +1,324 @@
+/**
+ * Permissions Component Styles
+ * Matches the global PWA dark theme design system
+ */
+
+.permissions-view {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.permissions-header {
+  margin-bottom: 24px;
+}
+
+.permissions-header h2 {
+  margin: 0 0 12px 0;
+  font-size: 22px;
+  font-weight: 500;
+  color: #fff;
+}
+
+.permissions-header p {
+  margin: 8px 0;
+  color: #aaa;
+  line-height: 1.5;
+}
+
+.content-resolver-info {
+  padding: 12px;
+  background: rgba(30, 45, 75, 0.6);
+  border-left: 4px solid #4a90e2;
+  border-radius: 4px;
+  margin-top: 16px;
+  border: 1px solid rgba(100, 140, 210, 0.3);
+}
+
+.content-resolver-info strong {
+  color: #4a90e2;
+}
+
+.no-permissions {
+  text-align: center;
+  padding: 48px 20px;
+  background: rgba(30, 45, 75, 0.3);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.no-permissions h3 {
+  margin: 0 0 12px 0;
+  color: #aaa;
+  font-weight: 500;
+}
+
+.no-permissions p {
+  margin: 8px 0;
+  color: #999;
+}
+
+.permissions-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: rgba(30, 45, 75, 0.6);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.controls-left {
+  display: flex;
+  align-items: center;
+}
+
+.permission-count {
+  font-weight: 500;
+  color: #e6e6e6;
+}
+
+.controls-left select {
+  margin-left: 12px;
+  padding: 6px 10px;
+  border: 1px solid rgba(100, 140, 210, 0.3);
+  border-radius: 4px;
+  background: rgba(20, 30, 50, 0.6);
+  color: #e6e6e6;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.controls-left select:focus {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.3);
+  outline: none;
+}
+
+.clear-all-button {
+  padding: 8px 16px;
+  background: #7f1d2f;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.clear-all-button:hover {
+  background: #9c2539;
+}
+
+.clear-all-button:disabled {
+  background: #666;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.permissions-table {
+  background: transparent;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1fr 1.2fr 0.8fr;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(30, 45, 75, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6e6e6;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1fr 1.2fr 0.8fr;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.table-row:hover {
+  background: rgba(74, 144, 226, 0.1);
+}
+
+.table-row:nth-child(even) {
+  background-color: rgba(30, 45, 75, 0.3);
+}
+
+.table-row:nth-child(even):hover {
+  background-color: rgba(74, 144, 226, 0.15);
+}
+
+.table-row:last-child {
+  border-bottom: none;
+}
+
+.app-host {
+  font-weight: 500;
+  color: #e6e6e6;
+  word-break: break-word;
+  font-size: 14px;
+}
+
+.operation-type {
+  color: #aaa;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-kind {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(74, 144, 226, 0.2);
+  color: #4a90e2;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.permission-status {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.permission-status.allowed {
+  color: #00b894;
+}
+
+.permission-status.denied {
+  color: #e74c3c;
+}
+
+.date {
+  color: #999;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.revoke-button {
+  padding: 6px 12px;
+  background: #1a3265;
+  color: #e6e6e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.revoke-button:hover {
+  background: #234383;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.permissions-footer {
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(30, 45, 75, 0.6);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.footer-note {
+  margin: 0;
+  color: #aaa;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.footer-note strong {
+  color: #e6e6e6;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .permissions-controls {
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .controls-left,
+  .controls-right {
+    width: 100%;
+  }
+
+  .controls-left {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .controls-left select {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .clear-all-button {
+    width: 100%;
+  }
+
+  .table-header {
+    display: none;
+  }
+
+  .table-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    margin-bottom: 12px;
+  }
+
+  .table-row > span::before,
+  .table-row > div::before {
+    display: block;
+    content: attr(data-label);
+    font-weight: 600;
+    color: #4a90e2;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .app-host::before {
+    content: "App / Host";
+  }
+
+  .operation-type::before {
+    content: "Operation";
+  }
+
+  .permission-status::before {
+    content: "Status";
+  }
+
+  .date::before {
+    content: "Date Saved";
+  }
+
+  .actions::before {
+    content: "Actions";
+  }
+}

@@ -1,6 +1,7 @@
 import fs           from 'fs'
 import * as esbuild from 'esbuild'
 import path         from 'path'
+import { execSync } from 'child_process'
 
 type Loader = 'js' | 'jsx' | 'ts' | 'tsx' | 'css' | 'json' | 'text' | 'base64' | 'dataurl' | 'file' | 'binary'
 
@@ -23,9 +24,80 @@ interface BuildOptions {
 
 const PUBLIC_DIR = 'public'
 const DIST_DIR   = 'dist'
+const ANDROID_ASSETS_DIR = 'android/app/src/main/assets'
+
+/**
+ * Copy PWA dist files to Android assets directory
+ */
+async function copyToAndroidAssets(): Promise<void> {
+  console.log('[ build ] copying PWA assets to Android...')
+
+  // Ensure Android assets directory exists
+  await fs.promises.mkdir(ANDROID_ASSETS_DIR, { recursive: true })
+
+  // Files and directories to copy
+  const itemsToCopy = [
+    'app.js',
+    'app.js.map',
+    'sw.js',
+    'sw.js.map',
+    'index.html',
+    'manifest.json',
+    'favicon.ico',
+    'styles',
+    'icons'
+  ]
+
+  for (const item of itemsToCopy) {
+    const srcPath = path.join(DIST_DIR, item)
+    const destPath = path.join(ANDROID_ASSETS_DIR, item)
+
+    try {
+      const stat = await fs.promises.stat(srcPath)
+      if (stat.isDirectory()) {
+        // Remove existing directory and copy fresh
+        await fs.promises.rm(destPath, { recursive: true, force: true })
+        await fs.promises.cp(srcPath, destPath, { recursive: true })
+        console.log(`[ build ]   copied ${item}/`)
+      } else {
+        await fs.promises.copyFile(srcPath, destPath)
+        console.log(`[ build ]   copied ${item}`)
+      }
+    } catch (err) {
+      // Skip if file doesn't exist (e.g., icons directory may not exist)
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err
+      }
+    }
+  }
+
+  console.log('[ build ] Android assets updated')
+}
+
+/**
+ * Build Android APK using Gradle
+ */
+function buildAndroidApk(): void {
+  console.log('[ build ] building Android APK...')
+
+  const androidDir = path.join(process.cwd(), 'android')
+
+  try {
+    execSync('./gradlew assembleDebug', {
+      cwd: androidDir,
+      stdio: 'inherit'
+    })
+    console.log('[ build ] Android APK built successfully')
+    console.log(`[ build ] APK location: android/app/build/outputs/apk/debug/app-debug.apk`)
+  } catch (err) {
+    console.error('[ build ] Android build failed')
+    throw err
+  }
+}
 
 async function build(): Promise<void> {
   const watch = process.argv.includes('--watch')
+  const android = process.argv.includes('--android')
 
   // Clean dist directory.
   fs.rmSync(`./${DIST_DIR}`, { recursive: true, force: true })
@@ -207,8 +279,14 @@ async function build(): Promise<void> {
       esbuild.build(swBuildOptions),
       copyCssFiles()
     ])
-    
-    console.log('[ build ] build complete')
+
+    console.log('[ build ] PWA build complete')
+
+    // If --android flag is passed, copy to Android and build APK
+    if (android) {
+      await copyToAndroidAssets()
+      buildAndroidApk()
+    }
   }
 }
 

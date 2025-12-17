@@ -2,6 +2,7 @@ package com.frostr.igloo
 
 import android.app.Dialog
 import android.content.Context
+import android.content.DialogInterface
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -83,6 +84,7 @@ class NIP55PermissionDialog : DialogFragment() {
     interface PermissionCallback {
         fun onApproved()
         fun onDenied()
+        fun onCancelled()
     }
 
     fun setCallback(callback: PermissionCallback) {
@@ -109,7 +111,23 @@ class NIP55PermissionDialog : DialogFragment() {
                 handleDeny(appId, isBulk)
             }
 
-        return builder.create()
+        val dialog = builder.create()
+
+        // Prevent dialog from being cancelled by touching outside
+        // This allows users to dismiss the keyboard without dismissing the dialog
+        dialog.setCanceledOnTouchOutside(false)
+
+        return dialog
+    }
+
+    /**
+     * Called when the dialog is cancelled (back button, touch outside, etc.)
+     * This ensures we return an immediate response instead of waiting for timeout
+     */
+    override fun onCancel(dialog: DialogInterface) {
+        super.onCancel(dialog)
+        Log.d(TAG, "Permission dialog cancelled by user")
+        callback?.onCancelled()
     }
 
     private fun createDialogView(appId: String, isBulk: Boolean): View {

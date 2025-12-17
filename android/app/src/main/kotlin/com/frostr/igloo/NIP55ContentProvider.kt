@@ -2,6 +2,7 @@ package com.frostr.igloo
 
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Intent
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -45,18 +47,98 @@ class NIP55ContentProvider : ContentProvider() {
         private const val AUTHORITY_NIP44_ENCRYPT = "NIP44_ENCRYPT"
         private const val AUTHORITY_NIP44_DECRYPT = "NIP44_DECRYPT"
         private const val AUTHORITY_DECRYPT_ZAP_EVENT = "DECRYPT_ZAP_EVENT"
+
+        // Shared result bridge instance (registered with WebView in MainActivity)
+        @Volatile
+        private var sharedResultBridge: NIP55ResultBridge? = null
+
+        /**
+         * Get or create the shared result bridge instance
+         * This should be registered with WebView in MainActivity
+         */
+        @JvmStatic
+        fun getSharedResultBridge(): NIP55ResultBridge {
+            return sharedResultBridge ?: synchronized(this) {
+                sharedResultBridge ?: NIP55ResultBridge().also {
+                    sharedResultBridge = it
+                    Log.d(TAG, "Created shared NIP55ResultBridge")
+                }
+            }
+        }
     }
 
     private val gson = Gson()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Request deduplication cache: eventId -> (result, timestamp)
+    // Request deduplication: track in-flight requests and cache results
+    private val pendingRequests = java.util.concurrent.ConcurrentHashMap<String, CountDownLatch>()
     private val resultCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Cursor?, Long>>()
     private val CACHE_TTL_MS = 5000L // Cache results for 5 seconds
+
+    // JavaScript interface for large result handling (uses shared instance)
+    private val resultBridge get() = getSharedResultBridge()
+
+    /**
+     * JavaScript interface for receiving large NIP-55 operation results
+     * This bypasses evaluateJavascript callback size limitations by allowing
+     * JavaScript to push results to Kotlin directly via @JavascriptInterface
+     */
+    class NIP55ResultBridge {
+        private val resultMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+        private val latchMap = java.util.concurrent.ConcurrentHashMap<String, CountDownLatch>()
+
+        @android.webkit.JavascriptInterface
+        fun setResult(resultKey: String, jsonResult: String) {
+            Log.d("NIP55ContentProvider", "ResultBridge received result for $resultKey (${jsonResult.length} chars)")
+            resultMap[resultKey] = jsonResult
+            latchMap[resultKey]?.countDown()
+        }
+
+        fun waitForResult(resultKey: String, timeoutMs: Long): String? {
+            // Check if result already arrived (race condition: setResult called before waitForResult)
+            val existingResult = resultMap.remove(resultKey)
+            if (existingResult != null) {
+                Log.d("NIP55ContentProvider", "Result already available for $resultKey")
+                return existingResult
+            }
+
+            val latch = CountDownLatch(1)
+            latchMap[resultKey] = latch
+
+            if (latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                val result = resultMap.remove(resultKey)
+                latchMap.remove(resultKey)
+                return result
+            }
+
+            latchMap.remove(resultKey)
+            return null
+        }
+
+        fun cleanup(resultKey: String) {
+            resultMap.remove(resultKey)
+            latchMap.remove(resultKey)
+        }
+    }
 
     override fun onCreate(): Boolean {
         Log.d(TAG, "NIP55ContentProvider initialized")
         return true
+    }
+
+    /**
+     * Check if WebView is available, return null immediately if not
+     *
+     * We don't try to start MainActivity from ContentProvider because Android
+     * blocks background activity starts. Instead, we return null immediately
+     * to trigger the Intent flow fallback (InvisibleNIP55Handler) which CAN
+     * start MainActivity since it's launched by a foreground app (Amethyst).
+     */
+    private fun startMainActivityAndWaitForWebView(): WebView? {
+        // Just return null immediately - don't try to start MainActivity
+        // The Intent flow (InvisibleNIP55Handler) will handle launching MainActivity
+        Log.d(TAG, "WebView not available - returning null to trigger Intent flow")
+        return null
     }
 
     override fun query(
@@ -90,43 +172,64 @@ class NIP55ContentProvider : ContentProvider() {
 
             Log.d(TAG, "Query args: ${args.joinToString(", ")}")
 
-            // Extract event ID for deduplication (for sign_event operations)
-            val eventId = if (operationType == "sign_event" && args.isNotEmpty()) {
-                try {
-                    val eventJson = args[0]
-                    val eventMap = gson.fromJson(eventJson, Map::class.java)
-                    eventMap["id"]?.toString()
-                } catch (e: Exception) {
-                    null
-                }
-            } else null
+            // Generate content-based deduplication key
+            val dedupeKey = getDeduplicationKey(callingPackage, operationType, args)
+            Log.d(TAG, "✓ Request received: $operationType (dedupe_key=$dedupeKey)")
 
-            // Check cache for duplicate requests
-            if (eventId != null) {
-                val cached = resultCache[eventId]
-                if (cached != null) {
-                    val (cachedResult, timestamp) = cached
-                    if (System.currentTimeMillis() - timestamp < CACHE_TTL_MS) {
-                        Log.d(TAG, "Returning cached result for event $eventId")
-                        return cachedResult
-                    } else {
-                        // Clean up expired entry
-                        resultCache.remove(eventId)
-                    }
+            // Check cache for completed requests
+            val cached = resultCache[dedupeKey]
+            if (cached != null) {
+                val (cachedResult, timestamp) = cached
+                if (System.currentTimeMillis() - timestamp < CACHE_TTL_MS) {
+                    Log.d(TAG, "✓ Returning cached result (dedupe_key=$dedupeKey)")
+                    return cachedResult
+                } else {
+                    // Clean up expired entry
+                    resultCache.remove(dedupeKey)
                 }
             }
 
+            // Check if this exact request is already being processed
+            val existingLatch = pendingRequests.putIfAbsent(dedupeKey, CountDownLatch(1))
+            if (existingLatch != null) {
+                Log.d(TAG, "✗ Duplicate request blocked - waiting for in-flight request (dedupe_key=$dedupeKey)")
+                // Wait for the in-flight request to complete
+                if (existingLatch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    // Return cached result from completed request
+                    val completedResult = resultCache[dedupeKey]
+                    if (completedResult != null && System.currentTimeMillis() - completedResult.second < CACHE_TTL_MS) {
+                        Log.d(TAG, "✓ Returning result from completed duplicate (dedupe_key=$dedupeKey)")
+                        return completedResult.first
+                    }
+                }
+                Log.w(TAG, "✗ Timeout waiting for duplicate request (dedupe_key=$dedupeKey)")
+                return null
+            }
+
             // Check if MainActivity WebView is available
-            val webView = MainActivity.getWebViewInstance()
+            var webView = MainActivity.getWebViewInstance()
             if (webView == null) {
-                Log.d(TAG, "MainActivity WebView not available - falling back to Intent flow")
-                return null // Amethyst will use foreground Intent flow
+                // WebView not available - try to start MainActivity and wait for it
+                webView = startMainActivityAndWaitForWebView()
+
+                if (webView == null) {
+                    Log.d(TAG, "WebView still not available after starting MainActivity - falling back to Intent flow")
+                    // Cleanup pending request tracker before returning null
+                    pendingRequests[dedupeKey]?.countDown()
+                    pendingRequests.remove(dedupeKey)
+                    return null // Amethyst will use foreground Intent flow
+                }
             }
 
             // Check permissions from storage
             if (!hasAutomaticPermission(webView, callingPackage, operationType, args)) {
-                Log.i(TAG, "No automatic permission for $callingPackage:$operationType")
-                return createRejectedCursor("Permission denied")
+                Log.i(TAG, "No automatic permission for $callingPackage:$operationType - falling back to Intent flow")
+                // Cleanup pending request tracker before returning null
+                pendingRequests[dedupeKey]?.countDown()
+                pendingRequests.remove(dedupeKey)
+                // Return null to signal Amethyst to use foreground Intent flow for permission prompt
+                // This matches Amber's behavior - null means "no saved permission, please prompt user"
+                return null
             }
 
             // Execute signing operation synchronously via WebView
@@ -139,15 +242,16 @@ class NIP55ContentProvider : ContentProvider() {
                 result == null -> null // Operation failed
                 result.contains("\"error\"") -> {
                     val errorMsg = extractError(result)
-                    Log.w(TAG, "Operation failed: $errorMsg")
+                    Log.w(TAG, "Operation failed: $errorMsg (full result: $result)")
                     createRejectedCursor(errorMsg)
                 }
                 else -> createResultCursor(result, operationType)
             }
 
             // Cache the result for deduplication
-            if (eventId != null && resultCursor != null) {
-                resultCache[eventId] = Pair(resultCursor, System.currentTimeMillis())
+            if (resultCursor != null) {
+                resultCache[dedupeKey] = Pair(resultCursor, System.currentTimeMillis())
+                Log.d(TAG, "✓ Cached result (dedupe_key=$dedupeKey)")
                 // Clean up old cache entries (keep cache size reasonable)
                 if (resultCache.size > 100) {
                     val now = System.currentTimeMillis()
@@ -155,10 +259,22 @@ class NIP55ContentProvider : ContentProvider() {
                 }
             }
 
+            // Signal completion and cleanup pending request tracker
+            pendingRequests[dedupeKey]?.countDown()
+            pendingRequests.remove(dedupeKey)
+
             return resultCursor
 
         } catch (e: Exception) {
             Log.e(TAG, "Error in ContentProvider query", e)
+            // Cleanup pending request tracker on exception
+            try {
+                val dedupeKey = getDeduplicationKey(callingPackage ?: "", parseOperationType(uri) ?: "", projection ?: arrayOf())
+                pendingRequests[dedupeKey]?.countDown()
+                pendingRequests.remove(dedupeKey)
+            } catch (cleanupError: Exception) {
+                Log.w(TAG, "Failed to cleanup pending request", cleanupError)
+            }
             return null
         }
     }
@@ -261,6 +377,7 @@ class NIP55ContentProvider : ContentProvider() {
 
     /**
      * Execute NIP-55 operation synchronously via WebView JavaScript
+     * Uses JavascriptInterface bridge to bypass evaluateJavascript size limits
      */
     private fun executeNIP55Operation(
         webView: WebView,
@@ -284,44 +401,18 @@ class NIP55ContentProvider : ContentProvider() {
 
         if (!startLatch.await(5000, TimeUnit.MILLISECONDS)) {
             Log.w(TAG, "Timeout starting async operation")
+            resultBridge.cleanup(resultKey)
             return null
         }
 
-        // Poll for result
-        val result = AtomicReference<String?>()
-        val pollStartTime = System.currentTimeMillis()
-        val pollInterval = 50L // 50ms between polls for faster response
+        // Wait for JavaScript to call resultBridge.setResult() via JavascriptInterface
+        val result = resultBridge.waitForResult(resultKey, TIMEOUT_MS)
 
-        while (System.currentTimeMillis() - pollStartTime < TIMEOUT_MS) {
-            val pollLatch = CountDownLatch(1)
-
-            mainHandler.post {
-                webView.evaluateJavascript("window.$resultKey") { pollResult ->
-                    val cleanResult = pollResult?.trim()?.removeSurrounding("\"")?.replace("\\\"", "\"")
-
-                    if (cleanResult != null && cleanResult != "undefined" && cleanResult != "null") {
-                        Log.d(TAG, "Result received (${cleanResult.length} chars)")
-                        result.set(cleanResult)
-                    }
-                    pollLatch.countDown()
-                }
-            }
-
-            pollLatch.await(pollInterval, TimeUnit.MILLISECONDS)
-
-            if (result.get() != null) {
-                // Clean up the global variable
-                mainHandler.post {
-                    webView.evaluateJavascript("delete window.$resultKey", null)
-                }
-                return result.get()
-            }
-
-            Thread.sleep(pollInterval)
+        if (result == null) {
+            Log.w(TAG, "Timeout waiting for WebView result")
         }
 
-        Log.w(TAG, "Timeout waiting for WebView result")
-        return null
+        return result
     }
 
     /**
@@ -377,7 +468,10 @@ class NIP55ContentProvider : ContentProvider() {
             (function() {
                 try {
                     if (!window.nostr?.nip55) {
-                        window.$resultKey = JSON.stringify({ error: 'NIP-55 bridge not ready' });
+                        const errorData = JSON.stringify({ error: 'NIP-55 bridge not ready' });
+                        if (window.Android_NIP55ResultBridge) {
+                            window.Android_NIP55ResultBridge.setResult('$resultKey', errorData);
+                        }
                         return 'SYNC_ERROR';
                     }
 
@@ -389,17 +483,26 @@ class NIP55ContentProvider : ContentProvider() {
                         if (result.ok) {
                             ${buildResultExtraction(operationType, resultKey)}
                         } else {
-                            window.$resultKey = JSON.stringify({ error: result.reason || 'Operation failed' });
+                            const errorData = JSON.stringify({ error: result.reason || 'Operation failed' });
+                            if (window.Android_NIP55ResultBridge) {
+                                window.Android_NIP55ResultBridge.setResult('$resultKey', errorData);
+                            }
                         }
                     }).catch(e => {
                         console.error('ContentProvider JS error:', e);
-                        window.$resultKey = JSON.stringify({ error: e.message });
+                        const errorData = JSON.stringify({ error: e.message });
+                        if (window.Android_NIP55ResultBridge) {
+                            window.Android_NIP55ResultBridge.setResult('$resultKey', errorData);
+                        }
                     });
 
                     return 'PENDING';
                 } catch (e) {
                     console.error('ContentProvider JS error:', e);
-                    window.$resultKey = JSON.stringify({ error: e.message });
+                    const errorData = JSON.stringify({ error: e.message });
+                    if (window.Android_NIP55ResultBridge) {
+                        window.Android_NIP55ResultBridge.setResult('$resultKey', errorData);
+                    }
                     return 'SYNC_ERROR';
                 }
             })()
@@ -408,22 +511,32 @@ class NIP55ContentProvider : ContentProvider() {
 
     /**
      * Build result extraction JavaScript based on operation type
+     * Uses JavascriptInterface bridge to bypass evaluateJavascript size limits
      */
     private fun buildResultExtraction(operationType: String, resultKey: String): String {
         return when (operationType) {
             "get_public_key" -> """
-                window.$resultKey = JSON.stringify({ result: result.pubkey });
+                const resultData = JSON.stringify({ result: result.result });
+                if (window.Android_NIP55ResultBridge) {
+                    window.Android_NIP55ResultBridge.setResult('$resultKey', resultData);
+                }
             """.trimIndent()
 
             "sign_event" -> """
-                window.$resultKey = JSON.stringify({
+                const resultData = JSON.stringify({
                     signature: result.result.sig,
                     event: result.result
                 });
+                if (window.Android_NIP55ResultBridge) {
+                    window.Android_NIP55ResultBridge.setResult('$resultKey', resultData);
+                }
             """.trimIndent()
 
             else -> """
-                window.$resultKey = JSON.stringify({ result: result.result });
+                const resultData = JSON.stringify({ result: result.result });
+                if (window.Android_NIP55ResultBridge) {
+                    window.Android_NIP55ResultBridge.setResult('$resultKey', resultData);
+                }
             """.trimIndent()
         }
     }
@@ -445,10 +558,10 @@ class NIP55ContentProvider : ContentProvider() {
      */
     private fun createResultCursor(jsonResult: String, operationType: String): Cursor {
         return try {
-            val resultMap = gson.fromJson(jsonResult, Map::class.java)
-
             when (operationType) {
                 "sign_event" -> {
+                    // sign_event returns JSON with signature and event
+                    val resultMap = gson.fromJson(jsonResult, Map::class.java)
                     val cursor = MatrixCursor(arrayOf("result", "event"))
                     val signature = resultMap["signature"]?.toString() ?: ""
                     // Convert event object back to JSON string for NIP-55 compliance
@@ -456,7 +569,23 @@ class NIP55ContentProvider : ContentProvider() {
                     cursor.addRow(arrayOf(signature, eventJson))
                     cursor
                 }
+                "nip04_decrypt", "nip44_decrypt", "nip04_encrypt", "nip44_encrypt", "decrypt_zap_event" -> {
+                    // Decrypt/encrypt operations return plain text in the result field
+                    // Match Amber's format: 3 columns with result repeated
+                    Log.d(TAG, "Decrypt operation - jsonResult length: ${jsonResult.length} chars")
+
+                    // Parse JSON and extract the plaintext result field
+                    val resultMap = gson.fromJson(jsonResult, Map::class.java)
+                    val plaintext = resultMap["result"]?.toString() ?: ""
+                    Log.d(TAG, "Decrypt operation - plaintext length: ${plaintext.length} chars")
+
+                    val cursor = MatrixCursor(arrayOf("signature", "event", "result"))
+                    cursor.addRow(arrayOf(plaintext, plaintext, plaintext))
+                    cursor
+                }
                 else -> {
+                    // get_public_key and other operations return JSON with result field
+                    val resultMap = gson.fromJson(jsonResult, Map::class.java)
                     val cursor = MatrixCursor(arrayOf("result"))
                     cursor.addRow(arrayOf(resultMap["result"]?.toString() ?: ""))
                     cursor
@@ -475,6 +604,68 @@ class NIP55ContentProvider : ContentProvider() {
         val cursor = MatrixCursor(arrayOf("rejected"))
         cursor.addRow(arrayOf(reason))
         return cursor
+    }
+
+    /**
+     * Generate a deduplication key for a request based on operation content
+     * This prevents duplicate requests with different request IDs from being processed
+     *
+     * Deduplication strategies by operation type:
+     * - sign_event: callingApp + type + event ID (from event JSON)
+     * - nip04_decrypt/nip44_decrypt: callingApp + type + ciphertext.hashCode() + pubkey
+     * - nip04_encrypt/nip44_encrypt: callingApp + type + plaintext.hashCode() + pubkey
+     * - decrypt_zap_event: callingApp + type + event.hashCode()
+     * - get_public_key: callingApp + type
+     */
+    private fun getDeduplicationKey(callingPackage: String, operationType: String, args: Array<String>): String {
+        return try {
+            when (operationType) {
+                "sign_event" -> {
+                    // Deduplicate by event ID
+                    val eventJson = args.getOrNull(0)
+                    if (eventJson != null) {
+                        val eventMap = gson.fromJson(eventJson, Map::class.java)
+                        val eventId = eventMap["id"]?.toString()
+                        "$callingPackage:$operationType:${eventId ?: eventJson.hashCode()}"
+                    } else {
+                        "$callingPackage:$operationType:${System.currentTimeMillis()}"
+                    }
+                }
+
+                "nip04_decrypt", "nip44_decrypt" -> {
+                    // Deduplicate by ciphertext + pubkey
+                    val ciphertext = args.getOrNull(0)
+                    val pubkey = args.getOrNull(1)
+                    "$callingPackage:$operationType:${ciphertext?.hashCode()}:$pubkey"
+                }
+
+                "nip04_encrypt", "nip44_encrypt" -> {
+                    // Deduplicate by plaintext + pubkey
+                    val plaintext = args.getOrNull(0)
+                    val pubkey = args.getOrNull(1)
+                    "$callingPackage:$operationType:${plaintext?.hashCode()}:$pubkey"
+                }
+
+                "decrypt_zap_event" -> {
+                    // Deduplicate by event JSON
+                    val eventJson = args.getOrNull(0)
+                    "$callingPackage:$operationType:${eventJson?.hashCode()}"
+                }
+
+                "get_public_key" -> {
+                    // Deduplicate by calling app + type only
+                    "$callingPackage:$operationType"
+                }
+
+                else -> {
+                    // Fallback: use timestamp to prevent deduplication for unknown types
+                    "$callingPackage:$operationType:${System.currentTimeMillis()}"
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to generate deduplication key, using timestamp", e)
+            "$callingPackage:$operationType:${System.currentTimeMillis()}"
+        }
     }
 
     // ContentProvider boilerplate - not used for NIP-55

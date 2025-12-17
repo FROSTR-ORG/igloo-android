@@ -23,9 +23,12 @@
   ],
   "type": "module",
   "scripts": {
+    "bench": "tsx script/bench.ts",
     "build": "tsx script/build.ts",
+    "build:android": "tsx script/build.ts --android",
     "dev": "tsx script/dev.ts",
     "keygen": "tsx script/keygen.ts",
+    "qrgen": "tsx script/qrgen.ts",
     "relay": "tsx script/relay.ts",
     "release": "tsx script/release.ts",
     "test": "tsx test/tape.ts",

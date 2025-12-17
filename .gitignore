@@ -6,6 +6,7 @@ dist
 .local
 NOTES.md
 TODO.md
+keyset.json
 
 # Android development
 *.apk

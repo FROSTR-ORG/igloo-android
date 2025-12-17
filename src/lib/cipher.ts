@@ -40,13 +40,17 @@ export function nip44_decrypt (
   secret  : string,
   payload : string
 ): string {
+  console.log('[cipher] nip44_decrypt input payload length:', payload.length)
   const { nonce, ciphertext, mac } = utils.decode_payload(payload)
   const convo_key      = utils.get_conversation_key(secret)
   const ctx            = utils.get_message_keys(convo_key, nonce)
   const calculated_mac = utils.hmac_aad(ctx.hmac_key, ciphertext, nonce)
   if (!equalBytes(calculated_mac, mac)) throw new Error('invalid MAC')
   const padded = chacha20(ctx.chacha_key, ctx.chacha_nonce, ciphertext)
-  return utils.unpad(padded)
+  const result = utils.unpad(padded)
+  console.log('[cipher] nip44_decrypt result type:', typeof result, 'length:', result.length)
+  console.log('[cipher] nip44_decrypt result preview:', result.substring(0, 100))
+  return result
 }
 
 /**
@@ -80,11 +84,15 @@ export function nip04_decrypt (
   secret  : string,
   content : string
 ) {
+  console.log('[cipher] nip04_decrypt input content length:', content.length)
   const [ encryped, iv ] = content.split('?iv=')
   const cbytes = Buff.base64(encryped)
   const sbytes = Buff.hex(secret)
   const vector = Buff.base64(iv)
   const decrypted = cbc(sbytes, vector).decrypt(cbytes)
-  return new Buff(decrypted).str
+  const result = new Buff(decrypted).str
+  console.log('[cipher] nip04_decrypt result type:', typeof result, 'length:', result.length)
+  console.log('[cipher] nip04_decrypt result preview:', result.substring(0, 100))
+  return result
 }
 

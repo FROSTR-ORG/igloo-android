@@ -48,13 +48,15 @@ export class BifrostSignDevice {
   async nip04_encrypt (pubkey : string, plaintext : string) : Promise<string> {
     const res = await this._node.req.ecdh(pubkey)
     if (!res.ok) throw new Error(res.err)
-    return cipher.nip04_encrypt(res.data, plaintext)
+    const secret = convert_pubkey(res.data, 'bip340')
+    return cipher.nip04_encrypt(secret, plaintext)
   }
 
   async nip04_decrypt (pubkey : string, ciphertext : string) : Promise<string> {
     const res = await this._node.req.ecdh(pubkey)
     if (!res.ok) throw new Error(res.err)
-    return cipher.nip04_decrypt(res.data, ciphertext)
+    const secret = convert_pubkey(res.data, 'bip340')
+    return cipher.nip04_decrypt(secret, ciphertext)
   }
 
   async nip44_encrypt (pubkey : string, plaintext : string) : Promise<string> {

@@ -1,5 +1,6 @@
 import { BifrostNode }                from '@frostr/bifrost'
 import { BifrostSignDevice }         from '@/class/signer.js'
+import { nip19 }                     from 'nostr-tools'
 
 import type {
   NIP55Request,
@@ -67,18 +68,25 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
 
     // For get_public_key, we can read from settings even when locked
     if (!nodeClient && request.type === 'get_public_key') {
-      // Try to get pubkey from settings
+      // Try to get GROUP pubkey from settings (not share pubkey)
       const stored_settings_json = localStorage.getItem('igloo-pwa')
       if (stored_settings_json) {
         const settings = JSON.parse(stored_settings_json)
-        if (settings.pubkey) {
-          console.log('Auto-signing get_public_key from settings (node locked)')
+        // Return the FROSTR group pubkey, not the share pubkey
+        // Group pubkey is what signatures are verified against
+        if (settings.group?.group_pk) {
+          // group_pk has "02" prefix (compressed key), slice it off for hex pubkey
+          const groupPubkey = settings.group.group_pk.slice(2)
+          console.log('Auto-signing get_public_key from settings (node locked) - returning group pubkey')
+          // Encode pubkey as npub for Coracle compatibility
+          const npub = nip19.npubEncode(groupPubkey)
           return {
             ok: true,
             type: request.type,
             id: request.id,
-            result: settings.pubkey
-          }
+            result: groupPubkey,  // Hex format for Amethyst - GROUP pubkey
+            npub: npub            // Bech32 format for Coracle
+          } as any
         }
       }
       throw new Error('No public key available')
@@ -111,6 +119,18 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     const result = await executeSigningOperation(signer, request)
 
     console.log('Auto-signing completed successfully')
+
+    // For get_public_key, add npub field for Coracle compatibility
+    if (request.type === 'get_public_key') {
+      const npub = nip19.npubEncode(result)
+      return {
+        ok: true,
+        type: request.type,
+        id: request.id,
+        result: result || '',  // Hex format for Amethyst
+        npub: npub             // Bech32 format for Coracle
+      } as any
+    }
 
     return {
       ok: true,

@@ -250,11 +250,22 @@ class AsyncBridge(private val webView: WebView) {
      * Build JavaScript code to call window.nostr.nip55
      */
     private fun buildJavaScript(id: String, requestJson: String): String {
+        // Properly escape JSON for embedding in JavaScript string literal
+        // Must escape: backslash, single quote, newline, carriage return, and other control characters
+        val escapedJson = requestJson
+            .replace("\\", "\\\\")    // Escape backslashes FIRST (before other escapes)
+            .replace("'", "\\'")       // Escape single quotes
+            .replace("\n", "\\n")      // Escape newlines
+            .replace("\r", "\\r")      // Escape carriage returns
+            .replace("\t", "\\t")      // Escape tabs
+            .replace("\b", "\\b")      // Escape backspace
+            .replace("\u000c", "\\f")  // Escape form feed
+
         return """
             (async function() {
                 try {
                     // Parse the request
-                    const request = JSON.parse('${requestJson.replace("'", "\\'")}');
+                    const request = JSON.parse('$escapedJson');
 
                     // Call the NIP-55 interface
                     if (!window.nostr || !window.nostr.nip55) {
