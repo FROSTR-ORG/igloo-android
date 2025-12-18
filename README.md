@@ -120,10 +120,7 @@ There are also a number of scripts for builds and releases:
 npm run build
 
 # Build the debug APK (includes PWA build).
-npm run build:android
-
-# Build the debug APK, and install via adb.
-npm run build:install
+npm run build:debug
 
 # Build and sign the release APK.
 npm run build:release

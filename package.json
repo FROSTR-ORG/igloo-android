@@ -17,16 +17,14 @@
     "url": "https://github.com/frostr-org/igloo-pwa.git"
   },
   "scripts": {
-    "bench": "tsx script/bench.ts",
     "build": "tsx script/build.ts",
-    "build:android": "tsx script/build.ts --android",
-    "build:install": "tsx script/build.ts --install",
+    "build:debug": "tsx script/build.ts --debug",
     "build:release": "tsx script/build.ts --release",
     "dev": "tsx script/dev.ts",
     "keygen": "tsx script/keygen.ts",
-    "qrgen": "tsx script/qrgen.ts",
     "relay": "tsx script/relay.ts",
-    "release": "bash script/release.sh"
+    "release": "bash script/release.sh",
+    "serve": "tsx script/serve.ts"
   },
   "dependencies": {
     "@cmdcode/nostr-p2p": "^2.0.11",

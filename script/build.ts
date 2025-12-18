@@ -159,7 +159,7 @@ function buildAndroidReleaseApk(): void {
 
 async function build(): Promise<void> {
   const watch = process.argv.includes('--watch')
-  const android = process.argv.includes('--android')
+  const debug = process.argv.includes('--debug')
   const install = process.argv.includes('--install')
   const release = process.argv.includes('--release')
 
@@ -333,8 +333,8 @@ async function build(): Promise<void> {
 
     console.log('[ build ] PWA build complete')
 
-    // If --android, --install, or --release flag is passed, copy to Android and build APK
-    if (android || install || release) {
+    // If --debug, --install, or --release flag is passed, copy to Android and build APK
+    if (debug || install || release) {
       await copyToAndroidAssets()
 
       if (release) {

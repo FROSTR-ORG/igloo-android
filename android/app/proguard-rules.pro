@@ -54,6 +54,9 @@
 -keep class com.frostr.igloo.NIP55Request { *; }
 -keep class com.frostr.igloo.bridges.NIP55RequestContext { *; }
 
+# Keep WelcomeDialog inner classes for Gson deserialization
+-keep class com.frostr.igloo.WelcomeDialog$WelcomeContent { *; }
+
 # Gson specific rules
 -keepattributes Signature
 -keepattributes *Annotation*
