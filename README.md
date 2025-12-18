@@ -63,57 +63,73 @@ The PWA can be run independently in the web browser, or bundled within an androi
 
 ## Development
 
-### Prerequisites
+### Getting Started
+
+Before starting development, you need the following:
 
 - Node.js 18+
 - npm
 - Android Studio (for Android development)
 - ADB (for device testing)
 
-### PWA Development
+You will also need to install dependencies:
 
 ```bash
 # Install dependencies
 npm install
-
-# Start dev server with hot reload (port 3000)
-npm run dev
-
-# Build the PWA for production
-npm run build
 ```
 
-The dev server binds to all interfaces, so you can test on mobile devices on the same network.
+### Development Tools
 
-### Android Development
-
-Open the `android/` directory in Android Studio, or build from command line:
+There are a number of scripts and tools to use:
 
 ```bash
-npm run build:android  # Build the debug APK (includes the PWA build).
-npm run build:install  # Build the debug APK, and install via adb.
-npm run build:release  # Build and sign the release APK.
+# Spin up a nostr relay and peer client.
+# Use --ngrok to enable ngrok support.
+npm run dev 
+
+# Run an emulated android device on your machine.
+npm run emulator
+
+# Generate a set of keys (saved to keyset.json),
+# or display existing keys (with scannable QR codes).
+npm run keygen
+
+# Run a local ephemeral nostr relay for testing.
+npm run relay
+
+ # Host the PWA on a webserver with hot reload.
+npm run serve
 ```
 
 ### Debugging
 
+To monitor application logs over adb:
+
 ```bash
 # Monitor Android logs
 adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
-
-# Debug PWA in Android WebView
-# 1. Enable USB debugging on device
-# 2. Open chrome://inspect in Chrome
-# 3. Find your WebView under "Remote Target"
 ```
 
-### Utility Scripts
+### Building
+
+There are also a number of scripts for builds and releases:
 
 ```bash
-npm run bench     # Spins up a relay (over ngrok) and peer client.
-npm run keygen    # Generate test keys (saved to keyset.json).
-npm run relay     # Run a local ephemeral nostr relay.
-npm run release   # Create a release build.
+ # Build the PWA from the `/src` folder.
+npm run build
+
+# Build the debug APK (includes PWA build).
+npm run build:android
+
+# Build the debug APK, and install via adb.
+npm run build:install
+
+# Build and sign the release APK.
+npm run build:release
+
+# Create a new github release using github actions.
+npm run release
 ```
 
 ## Documentation
