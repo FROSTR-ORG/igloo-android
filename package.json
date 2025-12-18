@@ -1,27 +1,21 @@
 {
-  "name": "@frostr/igloo-pwa",
+  "name": "@frostr/igloo-mobile",
   "version": "0.1.0",
-  "description": "FROSTR signing device for mobile and web.",
+  "description": "A NIP-55 android signing device for Nostr, powered by FROSTR.",
   "author": "Christopher Scott",
   "license": "MIT",
   "keywords": [
     "bitcoin",
     "nostr",
     "frostr",
-    "pwa",
-    "nip46"
+    "mobile",
+    "nip55",
+    "android"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/frostr-org/igloo-pwa.git"
   },
-  "files": [
-    "README.md",
-    "LICENSE",
-    "dist",
-    "src"
-  ],
-  "type": "module",
   "scripts": {
     "bench": "tsx script/bench.ts",
     "build": "tsx script/build.ts",
@@ -32,13 +26,7 @@
     "keygen": "tsx script/keygen.ts",
     "qrgen": "tsx script/qrgen.ts",
     "relay": "tsx script/relay.ts",
-    "release": "bash script/release.sh",
-    "test": "tsx test/tape.ts",
-    "test:nip55": "tsx test/nip55-test-runner.ts",
-    "test:browser": "node test/browser-debug-test.cjs",
-    "test:nip55-browser": "node test/browser-nip55-test.cjs",
-    "setup": "node test/manual-setup.cjs",
-    "test:all": "npm run test && npm run test:nip55"
+    "release": "bash script/release.sh"
   },
   "dependencies": {
     "@cmdcode/nostr-p2p": "^2.0.11",
