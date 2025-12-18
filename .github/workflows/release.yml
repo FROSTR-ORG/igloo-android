@@ -80,12 +80,18 @@ jobs:
 
       # Create keystore from secrets
       - name: Create keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/igloo-release.keystore
-          echo "storeFile=igloo-release.keystore" > android/keystore.properties
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}" >> android/keystore.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/keystore.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/keystore.properties
+          echo "$KEYSTORE_BASE64" | base64 -d > android/igloo-release.keystore
+          printf '%s\n' "storeFile=igloo-release.keystore" > android/keystore.properties
+          printf '%s\n' "storePassword=$KEYSTORE_PASSWORD" >> android/keystore.properties
+          printf '%s\n' "keyAlias=$KEY_ALIAS" >> android/keystore.properties
+          printf '%s\n' "keyPassword=$KEY_PASSWORD" >> android/keystore.properties
+          echo "Keystore properties created (passwords hidden)"
 
       # Copy PWA assets to Android
       - name: Copy PWA to Android assets
