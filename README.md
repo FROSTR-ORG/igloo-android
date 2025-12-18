@@ -2,15 +2,13 @@
 
 A NIP-55 android signing device for Nostr, powered by the FROSTR protocol.
 
-## What is FROSTR?
-
-FROSTR is a protocol for multiple devices to coordinate and sign messages over a nostr relay. Instead of storing your private key on a single device, FROSTR splits it across multiple signing nodes - Igloo acts as one of those nodes.
-
-## What is Igloo?
+## Overview
 
 Igloo is a mobile signing device for nostr-powered applications. It uses NIP-55 to communicate with other nostr apps, and the FROSTR protocol to sign messages.
 
-### Features
+FROSTR is a protocol for multiple devices to coordinate and sign messages over a nostr relay. Instead of storing your private key on a single device, FROSTR splits it across multiple signing nodes - Igloo acts as one of those nodes.
+
+## Features
 
 - **NIP-55 Signing**: Handles `nostrsigner:` URI requests from other Nostr apps
 - **FROSTR Integration**: Connects to your FROSTR network via a bifrost node
@@ -44,13 +42,6 @@ Igloo mobile is built as a PWA (Progressive Web App) wrapped in an Android shell
 ```
 
 The PWA can be run independently in the web browser, or bundled within an android application.
-
-### Why a PWA + Android Wrapper?
-
-- **Secure Storage**: Android Keystore provides hardware-backed encryption
-- **Intent Handling**: Native support for `nostrsigner:` URI scheme
-- **Background Persistence**: OkHttp maintains WebSocket connections when app is backgrounded
-- **Single Codebase**: Core logic lives in TypeScript/React, Android handles platform integration
 
 ## Project Structure
 
@@ -130,16 +121,6 @@ npm run release   # Create a release build.
 - `docs/NIP-55.md` - NIP-55 protocol details
 - `docs/DEVELOPMENT.md` - Extended development guide
 - `android/README.md` - Android-specific documentation
-
-## Tech Stack
-
-**PWA**: React 19, TypeScript, esbuild, Service Workers
-
-**Crypto**: @noble/ciphers, @noble/hashes, nostr-tools
-
-**FROSTR**: @frostr/bifrost, @cmdcode/nostr-p2p
-
-**Android**: Kotlin, WebView, OkHttp 4.12, CameraX 1.4
 
 ## License
 
