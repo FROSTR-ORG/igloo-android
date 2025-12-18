@@ -1,9 +1,10 @@
 node_modules
 dist
 
-.context
 .env
 .local
+.vscode
+repos
 NOTES.md
 TODO.md
 keyset.json
@@ -22,6 +23,7 @@ captures/
 .cxx/
 *.jks
 *.keystore
+keystore.properties
 .idea/
 *.iml
 .DS_Store

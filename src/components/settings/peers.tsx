@@ -60,12 +60,12 @@ export function PeerConfigField() {
   return (
     <div className="container">
       <h2 className="section-header">Peer Connections</h2>
-      <p className="description">Configure how you communicate with other peers in your signing group. "Request" will send signature requests to that peer, and "Respond" will co-sign requests from that peer.</p>
+      <p className="description">Configure how you communicate with other peers in your signing group. "Send" will send signature requests to that peer, and "Sign" will co-sign requests from that peer.</p>
 
       {peers.length === 0 &&
         <p className="description">You must configure your node's credentials first.</p>
       }
-      
+
       {peers.length > 0 &&
         <div>
           <table>
@@ -73,13 +73,13 @@ export function PeerConfigField() {
               <tr>
                 <th>Peer Public Key</th>
                 <th className="checkbox-cell">Send</th>
-                <th className="checkbox-cell">Receive</th>
+                <th className="checkbox-cell">Sign</th>
               </tr>
             </thead>
             <tbody>
               {peers.map((peer, idx) => (
                 <tr key={idx}>
-                  <td className="pubkey-cell">{peer.pubkey}</td>
+                  <td className="pubkey-cell">{peer.pubkey.slice(2)}</td>
                   <td className="checkbox-cell">
                     <input
                       type="checkbox"

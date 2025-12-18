@@ -24,6 +24,7 @@ interface BuildOptions {
 
 const PUBLIC_DIR = 'public'
 const DIST_DIR   = 'dist'
+const SRC_DIR    = 'src'
 const ANDROID_ASSETS_DIR = 'android/app/src/main/assets'
 
 /**
@@ -39,11 +40,10 @@ async function copyToAndroidAssets(): Promise<void> {
   const itemsToCopy = [
     'app.js',
     'app.js.map',
-    'sw.js',
-    'sw.js.map',
     'index.html',
     'manifest.json',
     'favicon.ico',
+    'defaults.json',
     'styles',
     'icons'
   ]
@@ -95,15 +95,82 @@ function buildAndroidApk(): void {
   }
 }
 
+/**
+ * Install Android APK to connected device via adb
+ */
+function installAndroidApk(release: boolean = false): void {
+  console.log('[ build ] installing APK to device...')
+
+  const apkPath = release
+    ? path.join(process.cwd(), 'android/app/build/outputs/apk/release/app-release.apk')
+    : path.join(process.cwd(), 'android/app/build/outputs/apk/debug/app-debug.apk')
+
+  try {
+    // Check if APK exists
+    if (!fs.existsSync(apkPath)) {
+      throw new Error(`APK not found at ${apkPath}. Run build first.`)
+    }
+
+    // Install with -r flag to replace existing app while preserving data
+    execSync(`adb install -r "${apkPath}"`, {
+      stdio: 'inherit'
+    })
+    console.log('[ build ] APK installed successfully')
+  } catch (err) {
+    console.error('[ build ] APK installation failed')
+    console.error('[ build ] Make sure a device is connected via adb')
+    throw err
+  }
+}
+
+/**
+ * Build Android release APK using Gradle
+ */
+function buildAndroidReleaseApk(): void {
+  console.log('[ build ] building Android release APK...')
+
+  const androidDir = path.join(process.cwd(), 'android')
+  const keystorePropsPath = path.join(androidDir, 'keystore.properties')
+
+  // Check if keystore.properties exists
+  if (!fs.existsSync(keystorePropsPath)) {
+    console.error('[ build ] keystore.properties not found at android/keystore.properties')
+    console.error('[ build ] Copy android/keystore.properties.example to android/keystore.properties')
+    console.error('[ build ] and fill in your keystore credentials.')
+    console.error('')
+    console.error('[ build ] To create a new keystore:')
+    console.error('[ build ]   keytool -genkey -v -keystore android/igloo-release.keystore \\')
+    console.error('[ build ]     -alias igloo -keyalg RSA -keysize 2048 -validity 10000')
+    throw new Error('keystore.properties not found')
+  }
+
+  try {
+    execSync('./gradlew assembleRelease', {
+      cwd: androidDir,
+      stdio: 'inherit'
+    })
+    console.log('[ build ] Android release APK built successfully')
+    console.log(`[ build ] APK location: android/app/build/outputs/apk/release/app-release.apk`)
+  } catch (err) {
+    console.error('[ build ] Android release build failed')
+    throw err
+  }
+}
+
 async function build(): Promise<void> {
   const watch = process.argv.includes('--watch')
   const android = process.argv.includes('--android')
+  const install = process.argv.includes('--install')
+  const release = process.argv.includes('--release')
 
   // Clean dist directory.
   fs.rmSync(`./${DIST_DIR}`, { recursive: true, force: true })
 
   // Copy public files.
   fs.cpSync(`./${PUBLIC_DIR}`, `./${DIST_DIR}`, { recursive: true })
+
+  // Copy defaults.json from src to dist
+  fs.cpSync(`./${SRC_DIR}/defaults.json`, `./${DIST_DIR}/defaults.json`)
 
   // Modified CSS plugin to extract CSS into separate files
   const cssPlugin = {
@@ -200,18 +267,6 @@ async function build(): Promise<void> {
     format      : 'esm',
   }
 
-  // Build service worker
-  const swBuildOptions: BuildOptions = {
-    ...commonOptions,
-    entryPoints : ['src/sw.ts'],
-    outfile     : 'dist/sw.js',
-    format      : 'iife',
-    loader      : {
-      '.tsx' : 'tsx',
-      '.ts'  : 'ts',
-    },
-  }
-
   // Copy CSS files to dist
   const copyCssFiles = async () => {
     const srcStylesDir = path.join('src', 'styles')
@@ -238,8 +293,6 @@ async function build(): Promise<void> {
       plugins: [cssPlugin]
     })
 
-    const swContext = await esbuild.context(swBuildOptions)
-    
     // Watch CSS files
     const watchCssFiles = async () => {
       const srcStylesDir = path.join('src', 'styles')
@@ -264,7 +317,6 @@ async function build(): Promise<void> {
     
     await Promise.all([
       appContext.watch(),
-      swContext.watch(),
       watchCssFiles()
     ])
     
@@ -276,16 +328,27 @@ async function build(): Promise<void> {
         ...appBuildOptions,
         plugins: [cssPlugin]
       }),
-      esbuild.build(swBuildOptions),
       copyCssFiles()
     ])
 
     console.log('[ build ] PWA build complete')
 
-    // If --android flag is passed, copy to Android and build APK
-    if (android) {
+    // If --android, --install, or --release flag is passed, copy to Android and build APK
+    if (android || install || release) {
       await copyToAndroidAssets()
-      buildAndroidApk()
+
+      if (release) {
+        // Build release APK
+        buildAndroidReleaseApk()
+      } else {
+        // Build debug APK
+        buildAndroidApk()
+      }
+
+      // If --install flag is passed, install APK to device
+      if (install) {
+        installAndroidApk(release)
+      }
     }
   }
 }

@@ -78,8 +78,9 @@ class NIP55PermissionDialog : DialogFragment() {
 
     private val gson = Gson()
     private var callback: PermissionCallback? = null
-    private var rememberChoice = false
+    private var rememberChoice = false  // Set based on dialog type in createDialogView
     private val selectedPermissions = mutableMapOf<String, Boolean>() // key: "type:kind", value: selected
+    private var mergedPermissionsList: List<Map<String, Any>> = emptyList() // Store merged permissions for saving
 
     interface PermissionCallback {
         fun onApproved()
@@ -151,14 +152,35 @@ class NIP55PermissionDialog : DialogFragment() {
             addSinglePermissionInfo(layout, context)
         }
 
-        // Remember choice checkbox
+        // Divider line to separate permissions from the remember option
+        layout.addView(android.view.View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1  // 1px height for divider
+            ).apply {
+                topMargin = 32
+                bottomMargin = 16
+            }
+            setBackgroundColor(android.graphics.Color.parseColor("#E0E0E0"))  // Light gray divider
+        })
+
+        // Remember choice section with distinct styling
+        layout.addView(TextView(context).apply {
+            text = "Settings"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#757575"))  // Gray label
+            setPadding(0, 0, 0, 8)
+        })
+
+        // Remember choice checkbox (checked by default for bulk dialogs only)
+        rememberChoice = isBulk  // Initialize based on dialog type
         layout.addView(CheckBox(context).apply {
             text = "Remember my choice"
-            isChecked = false
+            isChecked = isBulk  // Checked for bulk dialogs, unchecked for single permission dialogs
             setOnCheckedChangeListener { _, isChecked ->
                 rememberChoice = isChecked
             }
-            setPadding(0, 24, 0, 0)
+            setPadding(0, 0, 0, 0)
         })
 
         return layout
@@ -185,11 +207,53 @@ class NIP55PermissionDialog : DialogFragment() {
     }
 
     private fun addBulkPermissionsList(layout: LinearLayout, context: Context) {
+        val appId = arguments?.getString(ARG_APP_ID) ?: "unknown"
         val permissionsJson = arguments?.getString(ARG_PERMISSIONS_JSON) ?: "[]"
 
         try {
             val listType = object : TypeToken<List<Map<String, Any>>>() {}.type
-            val permissions: List<Map<String, Any>> = gson.fromJson(permissionsJson, listType)
+            val requestedPermissions: List<Map<String, Any>> = gson.fromJson(permissionsJson, listType)
+
+            // Load default permissions from config and merge with requested
+            val defaultPermissions = loadDefaultPermissions(context)
+            val mergedPermissions = mergePermissions(requestedPermissions, defaultPermissions)
+            Log.d(TAG, "Merged permissions: ${requestedPermissions.size} requested + ${defaultPermissions.size} defaults = ${mergedPermissions.size} total")
+
+            // Load existing permissions for this specific app
+            val existingPermissions = loadExistingPermissionsForApp(appId)
+            Log.d(TAG, "Found ${existingPermissions.size} existing permissions for app: $appId")
+
+            // Filter out permissions already granted for this app
+            val newPermissions = mergedPermissions.filter { perm ->
+                val type = perm["type"] as? String ?: "unknown"
+                val kind = (perm["kind"] as? Double)?.toInt()
+                val permKey = "$type:${kind ?: "null"}"
+
+                // Check if this permission is already allowed for this app
+                val alreadyAllowed = existingPermissions.any { existing ->
+                    existing.type == type &&
+                    existing.kind == kind &&
+                    existing.allowed
+                }
+
+                if (alreadyAllowed) {
+                    Log.d(TAG, "Filtering out already-allowed permission: $permKey for $appId")
+                }
+
+                !alreadyAllowed
+            }
+
+            // Store the filtered permissions list for use when saving
+            mergedPermissionsList = newPermissions
+
+            if (newPermissions.isEmpty()) {
+                layout.addView(TextView(context).apply {
+                    text = "All requested permissions are already granted for this app."
+                    textSize = 14f
+                    setPadding(0, 0, 0, 16)
+                })
+                return
+            }
 
             layout.addView(TextView(context).apply {
                 text = "Select permissions to grant:"
@@ -197,7 +261,27 @@ class NIP55PermissionDialog : DialogFragment() {
                 setPadding(0, 0, 0, 16)
             })
 
-            permissions.forEach { perm ->
+            // Create a scrollable container for the permissions list
+            val scrollView = android.widget.ScrollView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,  // Use weight to fill available space
+                    1f  // Weight of 1 to expand
+                ).apply {
+                    // Set max height to prevent dialog from being too tall
+                    // This will be constrained by the dialog's own size limits
+                }
+            }
+
+            val permissionsContainer = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+            newPermissions.forEach { perm ->
                 val type = perm["type"] as? String ?: "unknown"
                 val kind = (perm["kind"] as? Double)?.toInt()
                 val permKey = "$type:${kind ?: "null"}"
@@ -205,7 +289,7 @@ class NIP55PermissionDialog : DialogFragment() {
                 // Initialize as selected by default
                 selectedPermissions[permKey] = true
 
-                layout.addView(CheckBox(context).apply {
+                permissionsContainer.addView(CheckBox(context).apply {
                     text = buildString {
                         append(getHumanReadableName(type))
                         if (kind != null) {
@@ -222,6 +306,9 @@ class NIP55PermissionDialog : DialogFragment() {
                     }
                 })
             }
+
+            scrollView.addView(permissionsContainer)
+            layout.addView(scrollView)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse permissions JSON", e)
             layout.addView(TextView(context).apply {
@@ -229,6 +316,78 @@ class NIP55PermissionDialog : DialogFragment() {
                 textSize = 14f
             })
         }
+    }
+
+    /**
+     * Load existing permissions for a specific app from storage
+     */
+    private fun loadExistingPermissionsForApp(appId: String): List<Permission> {
+        return try {
+            val storageBridge = StorageBridge(requireContext())
+            val existingJson = storageBridge.getItem("local", "nip55_permissions_v2")
+                ?: return emptyList()
+
+            val storageType = object : TypeToken<PermissionStorage>() {}.type
+            val storage: PermissionStorage = gson.fromJson(existingJson, storageType)
+
+            // Filter to only this app's permissions
+            storage.permissions.filter { it.appId == appId }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load existing permissions for $appId", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Load default permissions from assets/defaults.json
+     */
+    private fun loadDefaultPermissions(context: Context): List<Map<String, Any>> {
+        return try {
+            val jsonString = context.assets.open("defaults.json")
+                .bufferedReader()
+                .use { it.readText() }
+
+            val configType = object : TypeToken<Map<String, Any>>() {}.type
+            val config: Map<String, Any> = gson.fromJson(jsonString, configType)
+
+            @Suppress("UNCHECKED_CAST")
+            (config["permissions"] as? List<Map<String, Any>>) ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load default permissions from config", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Merge requested permissions with default permissions, avoiding duplicates
+     * Requested permissions take precedence (come first in the list)
+     */
+    private fun mergePermissions(
+        requested: List<Map<String, Any>>,
+        defaults: List<Map<String, Any>>
+    ): List<Map<String, Any>> {
+        val result = requested.toMutableList()
+
+        // Track which permission keys we already have
+        val existingKeys = requested.map { perm ->
+            val type = perm["type"] as? String ?: "unknown"
+            val kind = (perm["kind"] as? Double)?.toInt()
+            "$type:${kind ?: "null"}"
+        }.toSet()
+
+        // Add defaults that aren't already in requested
+        defaults.forEach { defaultPerm ->
+            val type = defaultPerm["type"] as? String ?: "unknown"
+            val kind = (defaultPerm["kind"] as? Double)?.toInt()
+            val key = "$type:${kind ?: "null"}"
+
+            if (key !in existingKeys) {
+                result.add(defaultPerm)
+                Log.d(TAG, "Adding default permission: $key")
+            }
+        }
+
+        return result
     }
 
     private fun handleApprove(appId: String, isBulk: Boolean) {
@@ -263,12 +422,8 @@ class NIP55PermissionDialog : DialogFragment() {
             val permissions = storage.permissions.toMutableList()
 
             if (isBulk) {
-                // Save bulk permissions - only save selected ones
-                val permissionsJson = arguments?.getString(ARG_PERMISSIONS_JSON) ?: "[]"
-                val listType = object : TypeToken<List<Map<String, Any>>>() {}.type
-                val requestedPerms: List<Map<String, Any>> = gson.fromJson(permissionsJson, listType)
-
-                requestedPerms.forEach { perm ->
+                // Save bulk permissions - use the merged list (includes defaults) that was displayed
+                mergedPermissionsList.forEach { perm ->
                     val type = perm["type"] as? String ?: return@forEach
                     val kind = (perm["kind"] as? Double)?.toInt()
                     val permKey = "$type:${kind ?: "null"}"

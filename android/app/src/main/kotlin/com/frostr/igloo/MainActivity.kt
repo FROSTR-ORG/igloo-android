@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private val gson = Gson()
     private var signingOverlay: android.view.View? = null
     private var splashScreen: android.view.View? = null
+    private var isNormalLaunch = false  // Track if this is a normal user launch (not NIP-55)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // IMMEDIATELY move to background if this is a service request - before any UI setup
@@ -160,6 +161,7 @@ class MainActivity : AppCompatActivity() {
                     showSigningOverlay()
                 } else {
                     NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
+                    isNormalLaunch = true  // Mark as normal user launch for welcome dialog
                 }
                 initializeSecureWebView()
                 loadSecurePWA()
@@ -807,6 +809,28 @@ class MainActivity : AppCompatActivity() {
 
         // Hide splash screen with fade animation
         hideSplashScreen()
+
+        // Show welcome dialog on first normal launch
+        if (isNormalLaunch) {
+            showWelcomeDialogIfNeeded()
+        }
+    }
+
+    /**
+     * Show welcome dialog if the user hasn't dismissed it permanently
+     */
+    private fun showWelcomeDialogIfNeeded() {
+        try {
+            if (WelcomeDialog.shouldShow(storageBridge)) {
+                Log.d(TAG, "Showing welcome dialog")
+                val dialog = WelcomeDialog.newInstance()
+                dialog.show(supportFragmentManager, "WelcomeDialog")
+            } else {
+                Log.d(TAG, "Welcome dialog already dismissed by user")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show welcome dialog", e)
+        }
     }
 
     /**

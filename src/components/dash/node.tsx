@@ -1,24 +1,26 @@
-import { useEffect, useState }       from 'react'
+import { useEffect, useState } from 'react'
 import { nip19 }          from 'nostr-tools'
 import { useBifrostNode } from '@/context/node.js'
 import { useSettings }    from '@/context/settings.js'
-import { LockIcon }       from '@/components/util/icons.js'
+import { LockIcon, CopyIcon, CheckIcon } from '@/components/util/icons.js'
+import { STORAGE_KEYS }   from '@/const.js'
 
 export function NodeInfoView () {
   const node     = useBifrostNode()
   const settings = useSettings()
-  const pubkey   = settings.data.pubkey
+  const share_pk = settings.data.pubkey
+  const group_pk = settings.data.group?.group_pk
 
   const [ password, setPassword ]       = useState('')
   const [ error, setError ]             = useState<string | null>(null)
   const [ showHex, setShowHex ]         = useState(false)
   const [ copySuccess, setCopySuccess ] = useState(false)
 
-  const copy_pubkey = async () => {
+  const copy_pubkey = async (pk: string) => {
     // Return early if the pubkey is not set.
-    if (!pubkey) return
+    if (!pk) return
     // Get the npub value.
-    const valueToCopy = get_npub(pubkey, showHex)
+    const valueToCopy = get_npub(pk, showHex)
     // Try to copy the value.
     try {
       // Copy the value to the clipboard.
@@ -27,9 +29,8 @@ export function NodeInfoView () {
       setCopySuccess(true)
       // Reset the copy success state after 1 second.
       setTimeout(() => setCopySuccess(false), 1000)
-    } catch (err) {
-      // Log the error.
-      console.error('Failed to copy:', err)
+    } catch {
+      // Copy failed - ignore silently
     }
   }
 
@@ -42,7 +43,6 @@ export function NodeInfoView () {
       setError('Password is required')
       return
     }
-    console.log('unlocking node with password', password)
     // Unlock the client.
     node.unlock(password)
     // Reset the password state.
@@ -52,7 +52,7 @@ export function NodeInfoView () {
   useEffect(() => {
     if (node.status === 'locked') {
       // First check sessionStorage
-      const password = sessionStorage.getItem('igloo_session_password')
+      const password = sessionStorage.getItem(STORAGE_KEYS.SESSION_PASSWORD)
       // If the password is found, unlock the node.
       if (password) node.unlock(password)
     }
@@ -98,23 +98,34 @@ export function NodeInfoView () {
         <span className={`status-pill ${node.status}`}>{node.status}</span>
       </div>
       <div className="node-inline-row">
+        <span className="node-label">Share</span>
+        {!share_pk && <pre>no FROSTR share configured</pre>}
+        {share_pk &&
+          <div className="pubkey-container">
+            <span className="node-npub">
+              { share_pk }
+            </span>
+          </div>
+        }
+      </div>
+      <div className="node-inline-row">
         <span className="node-label">Pubkey</span>
-        {!pubkey && <pre>no pubkey set</pre>}
-        {pubkey &&
+        {!group_pk && <pre>no group pubkey set</pre>}
+        {group_pk &&
           <div className="pubkey-container">
             <span 
               className="node-npub" 
               onClick={() => setShowHex(!showHex)}
               title={`Click to show ${showHex ? 'npub' : 'hex'} format`}
             >
-              { truncate(get_npub(pubkey, showHex))}
+              { get_npub(group_pk, showHex)}
             </span>
             <button
-              onClick={copy_pubkey}
-              className={`button button-small copy-button ${copySuccess ? 'copied' : ''}`}
+              onClick={() => copy_pubkey(group_pk)}
+              className={`button copy-button ${copySuccess ? 'copied' : ''}`}
               title="Copy to clipboard"
             >
-              {copySuccess ? '✓' : '📋'}
+              {copySuccess ? <CheckIcon /> : <CopyIcon />}
             </button>
           </div>
         }
@@ -128,7 +139,7 @@ export function NodeInfoView () {
         </button>
         <button
           className="button"
-          onClick={() => {/* TODO: Add lock functionality */}}
+          onClick={() => node.lock()}
           title="Lock Node"
         >
           <LockIcon />
@@ -145,9 +156,4 @@ function get_npub (
   if (pubkey === null) return ''
   if (showHex)         return pubkey
   return nip19.npubEncode(pubkey)
-}
-
-function truncate (str: string) {
-  if (str.length <= 27) return str
-  return str.slice(0, 12) + '...' + str.slice(-12)
 }

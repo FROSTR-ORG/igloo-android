@@ -1,9 +1,10 @@
 import { useEffect, useState }   from 'react'
 import { useBifrostNode }        from '@/context/node.js'
+
 import { create_signing_bridge, executeAutoSigning } from '@/lib/signer.js'
 
 import type { ReactElement } from 'react'
-import type { NIP55Bridge } from '@/types/bridge.js'
+import type { NIP55Bridge }  from '@/types/bridge.js'
 
 /**
  * NIP-55 Bridge Component with Content Resolver Support
@@ -40,10 +41,8 @@ export function NIP55Bridge(): ReactElement | null {
         window.nostr.bridge = bridge
 
         set_bridge_ready(true)
-        console.log(`NIP-55 bridge initialized (status: ${node.status})`)
 
-      } catch (error) {
-        console.error('Failed to initialize NIP-55 bridge:', error)
+      } catch {
         set_bridge_ready(false)
         // Clean up bridge on error
         if (window.nostr?.bridge) {
@@ -60,7 +59,6 @@ export function NIP55Bridge(): ReactElement | null {
           window.nostr.bridge.nodeClient = null
         }
         set_bridge_ready(false)
-        console.log('NIP-55 bridge cleaned up (node offline)')
       }
     }
   }, [node.client, node.status])

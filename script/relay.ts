@@ -217,11 +217,11 @@ class ClientSession {
           return this._onclose(subid)
         default:
           this.log.info('unable to handle message type:', verb)
-          this.send(['NOTICE', '', 'Unable to handle message'])
+          this.send(['NOTICE', 'Unable to handle message'])
       }
     } catch (e) {
       this.log.debug('failed to parse message:\n\n', message)
-      return this.send(['NOTICE', '', 'Unable to parse message'])
+      return this.send(['NOTICE', 'Unable to parse message'])
     }
   }
 

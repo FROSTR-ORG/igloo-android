@@ -1,13 +1,13 @@
 import { Buff }        from '@cmdcode/buff'
 import { base64 }      from '@scure/base'
-import { hmac }        from '@noble/hashes/hmac'
-import { sha256 }      from '@noble/hashes/sha2'
-import { concatBytes } from '@noble/hashes/utils'
+import { hmac }        from '@noble/hashes/hmac.js'
+import { sha256 }      from '@noble/hashes/sha2.js'
+import { concatBytes } from '@noble/hashes/utils.js'
 
 import {
   extract as hkdf_extract,
   expand as hkdf_expand
-} from '@noble/hashes/hkdf'
+} from '@noble/hashes/hkdf.js'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

@@ -1,10 +1,13 @@
 import { StoreController } from '../class/store.js'
+import { STORAGE_KEYS }    from '@/const.js'
 
 import {
   createContext,
   useContext,
   useState
 } from 'react'
+
+import defaults from '@/defaults.json'
 
 import type { ReactElement } from 'react'
 
@@ -19,10 +22,10 @@ export const DEFAULT_STORE : SettingsData = {
   share       : null,
   peers       : [],
   pubkey      : null,
-  relays      : []
+  relays      : [ ...defaults.relays ]
 }
 
-const STORE_KEY  = 'igloo-pwa'
+const STORE_KEY  = STORAGE_KEYS.SETTINGS
 const params     = new URLSearchParams(window.location.search)
 const username   = params.get('user')
 const store_key  = username ? `${STORE_KEY}-${username}` : STORE_KEY

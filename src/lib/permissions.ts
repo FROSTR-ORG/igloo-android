@@ -6,8 +6,9 @@
  */
 
 import type { PermissionRule, PermissionStorage, NIP55OperationType, PermissionStatus, BulkPermissionRequest } from '@/types/permissions.js'
+import { STORAGE_KEYS } from '@/const.js'
 
-const STORAGE_KEY = 'nip55_permissions_v2'
+const STORAGE_KEY = STORAGE_KEYS.PERMISSIONS
 const STORAGE_VERSION = 2
 
 /**
@@ -22,7 +23,6 @@ export function initPermissionStorage(): void {
       permissions: []
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storage))
-    console.log('Initialized NIP-55 permission storage v2')
   }
 }
 
@@ -36,8 +36,7 @@ function getStoredPermissions(): PermissionRule[] {
 
     const storage: PermissionStorage = JSON.parse(data)
     return storage.permissions || []
-  } catch (error) {
-    console.error('Failed to read permissions:', error)
+  } catch {
     return []
   }
 }
@@ -52,8 +51,7 @@ function savePermissions(permissions: PermissionRule[]): void {
       permissions
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storage))
-  } catch (error) {
-    console.error('Failed to save permissions:', error)
+  } catch {
     throw new Error('Permission storage failed')
   }
 }
@@ -134,8 +132,6 @@ export function setPermission(
 
   filtered.push(newPermission)
   savePermissions(filtered)
-
-  console.log(`Permission ${allowed ? 'granted' : 'denied'}: ${appId}:${type}${kind ? `:${kind}` : ''}`)
 }
 
 /**
@@ -152,7 +148,6 @@ export function revokePermission(
   )
 
   savePermissions(filtered)
-  console.log(`Permission revoked: ${appId}:${type}${kind ? `:${kind}` : ''}`)
 }
 
 /**
@@ -163,7 +158,6 @@ export function revokeAllForApp(appId: string): void {
   const filtered = permissions.filter(p => p.appId !== appId)
 
   savePermissions(filtered)
-  console.log(`All permissions revoked for: ${appId}`)
 }
 
 /**
@@ -202,8 +196,7 @@ export function parseNIP55Permissions(
       appId,
       permissions
     }
-  } catch (error) {
-    console.error('Failed to parse NIP-55 permissions:', error)
+  } catch {
     throw new Error('Invalid permissions format')
   }
 }
@@ -240,8 +233,6 @@ export function bulkSetPermissions(
   // Add new permissions
   const updated = [...filtered, ...newRules]
   savePermissions(updated)
-
-  console.log(`Bulk ${allowed ? 'granted' : 'denied'} ${newRules.length} permissions for ${appId}`)
 }
 
 /**

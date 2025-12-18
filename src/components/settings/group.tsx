@@ -36,8 +36,7 @@ export function GroupConfigField() {
         if (group === null) return
         // Update the group in the store.
         store.update({ group })
-      } catch (err) {
-        console.log(err)
+      } catch {
         setError('failed to decode package data')
       }
     }
@@ -122,28 +121,10 @@ export function GroupConfigField() {
         {isScanning && (
           <QRScanner
             onResult={(result: string) => {
-              console.log('Group Component: ===== QR RESULT RECEIVED =====')
-              console.log('Group Component: Raw result:', JSON.stringify(result))
-              console.log('Group Component: Result type:', typeof result)
-              console.log('Group Component: Result length:', result.length)
-              console.log('Group Component: Current input before:', JSON.stringify(input))
-
-              const trimmed = result.trim()
-              console.log('Group Component: Trimmed result:', JSON.stringify(trimmed))
-
-              setInput(trimmed)
-              console.log('Group Component: setInput called with:', JSON.stringify(trimmed))
-
+              setInput(result.trim())
               setIsScanning(false)
-              console.log('Group Component: Scanning stopped')
-
-              // Force a re-render to check state
-              setTimeout(() => {
-                console.log('Group Component: Input after timeout:', JSON.stringify(input))
-              }, 100)
             }}
-            onError={(error: Error) => {
-              console.error('Group Component: QR scan error:', error)
+            onError={() => {
               setIsScanning(false)
             }}
           />

@@ -1,60 +1,83 @@
 # Igloo Mobile
 
-A NIP-55 and FROSTR signing device, wrapped in a hybrid android application.
+A NIP-55 android signing device for Nostr, powered by the FROSTR protocol.
 
-## Overview
+## What is FROSTR?
 
-This application is built as a PWA (progressive web app) at its core, wrapped in a light android compatibility layer. This allows the PWA to better integrate with device intents (for NIP-55 support), persist connections in the background (for relay subscriptions), and survive the brutal dictatorship that is android power management.
+FROSTR is a protocol for multiple devices to coordinate and sign messages over a nostr relay. Instead of storing your private key on a single device, FROSTR splits it across multiple signing nodes - Igloo acts as one of those nodes.
+
+## What is Igloo?
+
+Igloo is a mobile signing device for nostr-powered applications. It uses NIP-55 to communicate with other nostr apps, and the FROSTR protocol to sign messages.
 
 ### Features
 
-* Uses a `bifrost` node to connect to your FROSTR network (over nostr).
-* Handles NIP-55 device signature requests for the `nostrsigner:` URI scheme.
-* Provides both manual (prompt) and automated (background) signing modes.
-* Includes permissions management for peers and event signing.
-* QR-Code scanning for easy setup and key exchange.
-* Secure enclave (on device) for storing cryptographic keys.
+- **NIP-55 Signing**: Handles `nostrsigner:` URI requests from other Nostr apps
+- **FROSTR Integration**: Connects to your FROSTR network via a bifrost node
+- **Permission Management**: Granular control over which apps can sign which event kinds
+- **Manual & Auto Signing**: Choose between prompt-based approval or background signing
+- **QR Code Setup**: Scan your FROSTR share to get started quickly
 
-### Architecture
+## Architecture
 
-The architecture of the android application shell is the following:
+Igloo mobile is built as a PWA (Progressive Web App) wrapped in an Android shell:
 
-* **Local Web View**: Renders the PWA as a web application
-* **Local Web Server**: Hosts the PWA and provides manual version control
-* **Secure Storage**: Stores session secrets while the PWA is asleep
-* **Web App Bridge**: Provides the PWA access to android system calls
+```
+┌─────────────────────────────────────────┐
+│           Android Shell                 │
+│  ┌───────────────────────────────────┐  │
+│  │  WebView (renders PWA)            │  │
+│  │  ┌─────────────────────────────┐  │  │
+│  │  │     React PWA               │  │  │
+│  │  │  - Bifrost node             │  │  │
+│  │  │  - NIP-55 handler           │  │  │
+│  │  │  - Permission manager       │  │  │
+│  │  └─────────────────────────────┘  │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  Native Bridges:                        │
+│  - Secure Storage (Android Keystore)    │
+│  - WebSocket (OkHttp)                   │
+│  - Camera (CameraX)                     │
+│  - NIP-55 Intent Handler                │
+└─────────────────────────────────────────┘
+```
 
-The PWA itself is built with:
-* **Frontend**: React 19 + TypeScript with Context-based state management.
-* **Build System**: Custom esbuild configuration with hot reload.
-* **Service Worker**: PWA capabilities with background sync and offline support.
-* **Cryptography**: Noble libraries for cryptographic operations.
-* **Nostr Integration**: NIP-55 signing support with FROSTR bifrost node.
+The PWA can be run independently in the web browser, or bundled within an android application.
 
-### Filesystem
+### Why a PWA + Android Wrapper?
 
-- `android/`: Android application shell (Kotlin), APK files, and gradle build environment
-- `docs/`: Documentation including NIP-55 guides, testing procedures, and protocol references
-- `dist/`: Output directory for esbuild and packaged PWA
-- `public/`: Web resources (index.html, manifest.json, icons, test files)
-- `script/`: Utility scripts for build, development, key generation, and relay server
-- `src/`: TypeScript/React source code for the PWA
-  - `components/`: React components (app, dash, settings, permissions, prompt, layout, utils)
-  - `context/`: React Context providers (console, cache, node, prompt, settings)
-  - `hooks/`: Custom React hooks (useBifrost, useNIP55Handler)
-  - `lib/`: Core libraries (nip55, cipher, enclave, encoder, nip19, util)
-  - `class/`: TypeScript classes (signer, store)
-  - `styles/`: CSS files for UI components
-  - `types.ts`: Centralized TypeScript type definitions
-- `test/`: Test suite (work in progress)
+- **Secure Storage**: Android Keystore provides hardware-backed encryption
+- **Intent Handling**: Native support for `nostrsigner:` URI scheme
+- **Background Persistence**: OkHttp maintains WebSocket connections when app is backgrounded
+- **Single Codebase**: Core logic lives in TypeScript/React, Android handles platform integration
+
+## Project Structure
+
+```
+├── android/          # Android app shell (Kotlin)
+├── dist/             # Build output
+├── docs/             # Additional documentation
+├── public/           # Static assets (index.html, icons)
+├── src/              # PWA source code (TypeScript/React)
+│   ├── components/   # React components
+│   ├── context/      # React context providers
+│   ├── hooks/        # Custom hooks (useBifrost, etc.)
+│   ├── lib/          # Core libraries (cipher, permissions, etc.)
+│   ├── class/        # TypeScript classes (signer, store)
+│   ├── styles/       # CSS files
+│   └── types/        # TypeScript type definitions
+└── script/           # Build and utility scripts
+```
 
 ## Development
 
 ### Prerequisites
 
-- Node.js and npm
-- Android SDK (for Android development)
-- ADB tools (for testing and debugging)
+- Node.js 18+
+- npm
+- Android Studio (for Android development)
+- ADB (for device testing)
 
 ### PWA Development
 
@@ -62,115 +85,62 @@ The PWA itself is built with:
 # Install dependencies
 npm install
 
-# Start development server with hot reload (port 3000)
+# Start dev server with hot reload (port 3000)
 npm run dev
 
-# Build production version
+# Build the PWA for production
 npm run build
-
-# Run test suite
-npm run test
 ```
 
-The dev server runs on port 3000 and is accessible on all network interfaces for mobile testing.
+The dev server binds to all interfaces, so you can test on mobile devices on the same network.
 
 ### Android Development
 
+Open the `android/` directory in Android Studio, or build from command line:
+
 ```bash
-# Monitor Android app logs
-adb logcat -s IglooWrapper:* PWA-*:*
+npm run build:android  # Build the debug APK (includes the PWA build).
+npm run build:install  # Build the debug APK, and install via adb.
+npm run build:release  # Build and sign the release APK.
+```
 
-# Clear logs before monitoring
-adb logcat -c
+### Debugging
 
-# Test NIP-55 intents
-./test-nip55-intents.sh
+```bash
+# Monitor Android logs
+adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
+
+# Debug PWA in Android WebView
+# 1. Enable USB debugging on device
+# 2. Open chrome://inspect in Chrome
+# 3. Find your WebView under "Remote Target"
 ```
 
 ### Utility Scripts
 
 ```bash
-# Generate cryptographic keys
-npm run keygen
-
-# Run development relay server
-npm run relay
-
-# Create release build
-npm run release
+npm run bench     # Spins up a relay (over ngrok) and peer client.
+npm run keygen    # Generate test keys (saved to keyset.json).
+npm run relay     # Run a local ephemeral nostr relay.
+npm run release   # Create a release build.
 ```
-
-### Build System
-
-The project uses a custom esbuild configuration with:
-- **Entry Points**: `src/index.tsx` → `dist/app.js`, `src/sw.ts` → `dist/sw.js`
-- **TypeScript**: Full TypeScript support with path aliases (`@/*` → `src/*`)
-- **CSS**: Separate CSS files copied from `src/styles/` to `dist/styles/`
-- **Watch Mode**: Hot reload during development
-- **PWA**: Service worker for offline capabilities
-
-## Testing
-
-### PWA Testing
-- Use Chrome DevTools for debugging
-- Test on localhost:3000 for development
-- Use the built-in console for runtime debugging
-
-### Android Testing
-- Use Android Studio or command-line tools
-- Test NIP-55 intents with the provided script
-- Monitor logs with `adb logcat`
-- Debug PWA within WebView using Chrome DevTools
-
-### NIP-55 Protocol Testing
-The project includes comprehensive NIP-55 testing:
-- Intent testing script (`test-nip55-intents.sh`)
-- Protocol handler debugging guides
-- Localhost testing procedures
-- URL handler compatibility testing
 
 ## Documentation
 
-The `docs/` directory contains:
-- **NIP-55.md**: Core NIP-55 specification details
-- **NIP-55-compatibility.md**: Compatibility notes and testing
+- `docs/NIP-55.md` - NIP-55 protocol details
+- `docs/DEVELOPMENT.md` - Extended development guide
+- `android/README.md` - Android-specific documentation
 
-## Configuration
+## Tech Stack
 
-The application supports URL parameters for configuration:
-- `group`: Group configuration
-- `pubkey`: Public key setup
-- `share`: Share package data
-- `relay`: Relay URL configuration
-- `nip55`: NIP-55 request handling
+**PWA**: React 19, TypeScript, esbuild, Service Workers
 
-## Key Technologies
+**Crypto**: @noble/ciphers, @noble/hashes, nostr-tools
 
-### Core Dependencies
-- **React 19**: Modern React with hooks and Context
-- **TypeScript**: Full type safety
-- **@frostr/bifrost**: FROSTR network integration
-- **@cmdcode/nostr-p2p**: Nostr peer-to-peer networking
-- **@noble/ciphers, @noble/hashes**: Cryptographic operations
-- **nostr-tools**: Nostr protocol utilities
+**FROSTR**: @frostr/bifrost, @cmdcode/nostr-p2p
 
-### Development Tools
-- **esbuild**: Fast TypeScript/React bundling
-- **tsx**: TypeScript execution
-- **serve**: Development server
-- **concurrently**: Parallel script execution
-- **tape**: Testing framework
+**Android**: Kotlin, WebView, OkHttp 4.12, CameraX 1.4
 
-### Android Integration
-- **Package**: `com.frostr.igloo`
-- **Min SDK**: 24 (Android 7.0)
-- **Target SDK**: 34 (Android 14)
-- **WebView**: Chrome-based for PWA rendering
-- **Intent Handling**: NIP-55 URL scheme support
+## License
 
-## Protocol Support
-
-- **NIP-55**: Android intent-based signing
-- **FROSTR**: Distributed key management and signing
-- **PWA**: Progressive Web App standards
-- **WebSocket**: Real-time relay connections with mobile persistence strategies
+MIT

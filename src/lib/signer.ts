@@ -1,6 +1,7 @@
 import { BifrostNode }                from '@frostr/bifrost'
 import { BifrostSignDevice }         from '@/class/signer.js'
 import { nip19 }                     from 'nostr-tools'
+import { STORAGE_KEYS }              from '@/const.js'
 
 import type {
   NIP55Request,
@@ -45,7 +46,6 @@ async function waitForNodeClient(maxWaitMs: number = 3000): Promise<BifrostNode 
 
   while (Date.now() - startTime < maxWaitMs) {
     if (window.nostr?.bridge?.nodeClient) {
-      console.log(`Node client became available after ${Date.now() - startTime}ms`)
       return window.nostr.bridge.nodeClient
     }
     // Wait 100ms before checking again
@@ -56,8 +56,6 @@ async function waitForNodeClient(maxWaitMs: number = 3000): Promise<BifrostNode 
 }
 
 export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Result> {
-  console.log('Auto-signing request:', request.type, 'from', request.host)
-
   try {
     // Check bridge availability
     if (!window.nostr?.bridge?.ready) {
@@ -69,7 +67,7 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     // For get_public_key, we can read from settings even when locked
     if (!nodeClient && request.type === 'get_public_key') {
       // Try to get GROUP pubkey from settings (not share pubkey)
-      const stored_settings_json = localStorage.getItem('igloo-pwa')
+      const stored_settings_json = localStorage.getItem(STORAGE_KEYS.SETTINGS)
       if (stored_settings_json) {
         const settings = JSON.parse(stored_settings_json)
         // Return the FROSTR group pubkey, not the share pubkey
@@ -77,7 +75,6 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
         if (settings.group?.group_pk) {
           // group_pk has "02" prefix (compressed key), slice it off for hex pubkey
           const groupPubkey = settings.group.group_pk.slice(2)
-          console.log('Auto-signing get_public_key from settings (node locked) - returning group pubkey')
           // Encode pubkey as npub for Coracle compatibility
           const npub = nip19.npubEncode(groupPubkey)
           return {
@@ -95,10 +92,9 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     // For signing operations, check if auto-unlock might happen
     if (!nodeClient && request.type !== 'get_public_key') {
       // Check if there's a session password (indicates auto-unlock will happen)
-      const sessionPassword = sessionStorage.getItem('igloo_session_password')
+      const sessionPassword = sessionStorage.getItem(STORAGE_KEYS.SESSION_PASSWORD)
 
       if (sessionPassword) {
-        console.log('Node locked but session password found - waiting for auto-unlock...')
         nodeClient = await waitForNodeClient(3000)
 
         if (!nodeClient) {
@@ -117,8 +113,6 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     // Create signer and execute operation
     const signer = new BifrostSignDevice(nodeClient)
     const result = await executeSigningOperation(signer, request)
-
-    console.log('Auto-signing completed successfully')
 
     // For get_public_key, add npub field for Coracle compatibility
     if (request.type === 'get_public_key') {
@@ -140,8 +134,6 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     }
 
   } catch (error) {
-    console.error('Auto-signing failed:', error)
-
     return {
       ok: false,
       type: request.type,
@@ -164,9 +156,6 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
  */
 export function create_signing_bridge(): NIP55WindowAPI {
   return async (request: NIP55Request): Promise<NIP55Result> => {
-    const start_time = Date.now()
-    console.log('NIP-55 signing request:', request.type, request.id)
-
     try {
       // Basic input validation
       if (!request.id || !request.type) {
@@ -174,16 +163,10 @@ export function create_signing_bridge(): NIP55WindowAPI {
       }
 
       // Execute signing directly - Android already checked permissions
-      console.log(`Executing auto-signing for ${request.host}:${request.type}`)
       const result = await executeAutoSigning(request)
-
-      const duration = Date.now() - start_time
-      console.log(`Auto-signing completed in ${duration}ms`)
-
       return result
 
     } catch (error) {
-      console.error('Signing bridge error:', error)
       return {
         ok     : false,
         type   : request.type,

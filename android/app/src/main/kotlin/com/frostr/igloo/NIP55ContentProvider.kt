@@ -16,6 +16,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import com.frostr.igloo.util.NIP55Deduplicator
 
 /**
  * NIP-55 ContentProvider for background signing operations
@@ -608,64 +609,10 @@ class NIP55ContentProvider : ContentProvider() {
 
     /**
      * Generate a deduplication key for a request based on operation content
-     * This prevents duplicate requests with different request IDs from being processed
-     *
-     * Deduplication strategies by operation type:
-     * - sign_event: callingApp + type + event ID (from event JSON)
-     * - nip04_decrypt/nip44_decrypt: callingApp + type + ciphertext.hashCode() + pubkey
-     * - nip04_encrypt/nip44_encrypt: callingApp + type + plaintext.hashCode() + pubkey
-     * - decrypt_zap_event: callingApp + type + event.hashCode()
-     * - get_public_key: callingApp + type
+     * Delegates to shared NIP55Deduplicator utility
      */
     private fun getDeduplicationKey(callingPackage: String, operationType: String, args: Array<String>): String {
-        return try {
-            when (operationType) {
-                "sign_event" -> {
-                    // Deduplicate by event ID
-                    val eventJson = args.getOrNull(0)
-                    if (eventJson != null) {
-                        val eventMap = gson.fromJson(eventJson, Map::class.java)
-                        val eventId = eventMap["id"]?.toString()
-                        "$callingPackage:$operationType:${eventId ?: eventJson.hashCode()}"
-                    } else {
-                        "$callingPackage:$operationType:${System.currentTimeMillis()}"
-                    }
-                }
-
-                "nip04_decrypt", "nip44_decrypt" -> {
-                    // Deduplicate by ciphertext + pubkey
-                    val ciphertext = args.getOrNull(0)
-                    val pubkey = args.getOrNull(1)
-                    "$callingPackage:$operationType:${ciphertext?.hashCode()}:$pubkey"
-                }
-
-                "nip04_encrypt", "nip44_encrypt" -> {
-                    // Deduplicate by plaintext + pubkey
-                    val plaintext = args.getOrNull(0)
-                    val pubkey = args.getOrNull(1)
-                    "$callingPackage:$operationType:${plaintext?.hashCode()}:$pubkey"
-                }
-
-                "decrypt_zap_event" -> {
-                    // Deduplicate by event JSON
-                    val eventJson = args.getOrNull(0)
-                    "$callingPackage:$operationType:${eventJson?.hashCode()}"
-                }
-
-                "get_public_key" -> {
-                    // Deduplicate by calling app + type only
-                    "$callingPackage:$operationType"
-                }
-
-                else -> {
-                    // Fallback: use timestamp to prevent deduplication for unknown types
-                    "$callingPackage:$operationType:${System.currentTimeMillis()}"
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to generate deduplication key, using timestamp", e)
-            "$callingPackage:$operationType:${System.currentTimeMillis()}"
-        }
+        return NIP55Deduplicator.getDeduplicationKey(callingPackage, operationType, args)
     }
 
     // ContentProvider boilerplate - not used for NIP-55

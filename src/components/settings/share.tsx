@@ -151,13 +151,11 @@ export function ShareConfigField() {
         {isScanning && (
           <QRScanner
             onResult={(result: string) => {
-              console.log('Share Component: QR result received:', result)
               setInput(result.trim())
               setIsScanning(false)
-              console.log('Share Component: Input set and scanning stopped')
             }}
-            onError={(error: Error) => {
-              console.error('QR scan error:', error)
+            onError={() => {
+              setIsScanning(false)
             }}
           />
         )}
@@ -191,8 +189,7 @@ function get_share_json(input : string) {
     const share = decode_share(input)
     if (share === null) return null
     return JSON.stringify(share, null, 2)
-  } catch (err) {
-    console.error('get_share_json error', err)
+  } catch {
     return null
   }
 }

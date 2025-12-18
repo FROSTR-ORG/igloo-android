@@ -1,0 +1,17 @@
+{
+  "title": "Welcome to FROSTR",
+  "description": "Igloo mobile is a multi-signature signing device for notes and other stuff. It connects to your other signing devices over nostr, using the FROSTR protocol. ",
+  "warning": "This software is in alpha. Do not use your main private keys. You have been warned. Use at your own risk!",
+  "features": [
+    "NIP-55 signing for Nostr applications.",
+    "Granular permission controls for signing.",
+    "Secure enclave for storing your secrets.",
+    "Background signing for approved requests.",
+    "QR code scanning for easy setup."
+  ],
+  "gettingStarted": "You will need Igloo Desktop or Igloo Server in order to generate a set of keys. You can then import one of the keys into Igloo Mobile. For a full setup guide, please visit our website.",
+  "websiteUrl": "https://frostr.org",
+  "websiteButtonText": "Visit FROSTR Website",
+  "dismissButtonText": "Get Started",
+  "dontShowAgainText": "Don't show this again"
+}

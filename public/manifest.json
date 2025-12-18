@@ -1,7 +1,7 @@
 {
   "name": "Igloo Mobile",
   "short_name": "Igloo",
-  "description": "Mobile signing device for your FROSTR keys.",
+  "description": "Mobile signing device for FROSTR and other nostr apps (using NIP-55).",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

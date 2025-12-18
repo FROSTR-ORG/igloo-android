@@ -96,6 +96,27 @@
   outline: none;
 }
 
+.app-filter-input {
+  padding: 6px 10px;
+  border: 1px solid rgba(100, 140, 210, 0.3);
+  border-radius: 4px;
+  background: rgba(20, 30, 50, 0.6);
+  color: #e6e6e6;
+  font-size: 14px;
+  width: 100%;
+  max-width: 250px;
+}
+
+.app-filter-input::placeholder {
+  color: #666;
+}
+
+.app-filter-input:focus {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.3);
+  outline: none;
+}
+
 .clear-all-button {
   padding: 8px 16px;
   background: #7f1d2f;
@@ -118,116 +139,123 @@
   opacity: 0.5;
 }
 
-.permissions-table {
-  background: transparent;
-  border-radius: 4px;
+/* Compact permission cards */
+.permissions-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permission-card {
+  background: rgba(30, 45, 75, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  transition: background-color 0.15s;
+}
+
+.permission-card:hover {
+  background: rgba(30, 45, 75, 0.6);
+}
+
+.permission-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+.permission-info {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
-.table-header {
-  display: grid;
-  grid-template-columns: 2fr 1.5fr 1fr 1.2fr 0.8fr;
-  gap: 12px;
-  padding: 8px 12px;
-  background: rgba(30, 45, 75, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #e6e6e6;
-  font-weight: 500;
+.permission-app {
   font-size: 14px;
-}
-
-.table-row {
-  display: grid;
-  grid-template-columns: 2fr 1.5fr 1fr 1.2fr 0.8fr;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  align-items: center;
-  transition: background-color 0.2s;
-}
-
-.table-row:hover {
-  background: rgba(74, 144, 226, 0.1);
-}
-
-.table-row:nth-child(even) {
-  background-color: rgba(30, 45, 75, 0.3);
-}
-
-.table-row:nth-child(even):hover {
-  background-color: rgba(74, 144, 226, 0.15);
-}
-
-.table-row:last-child {
-  border-bottom: none;
-}
-
-.app-host {
   font-weight: 500;
   color: #e6e6e6;
-  word-break: break-word;
-  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
 }
 
-.operation-type {
-  color: #aaa;
-  font-size: 13px;
-  font-weight: 500;
+.permission-details {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+  font-size: 12px;
 }
 
-.event-kind {
-  display: inline-block;
-  padding: 2px 8px;
+.permission-op {
+  color: #888;
+  font-weight: 500;
+}
+
+.permission-kind {
+  padding: 1px 6px;
   background: rgba(74, 144, 226, 0.2);
   color: #4a90e2;
-  border-radius: 12px;
-  font-size: 11px;
+  border-radius: 10px;
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.permission-status {
-  font-weight: 600;
-  font-size: 14px;
+.permission-time {
+  color: #666;
+  font-size: 11px;
 }
 
-.permission-status.allowed {
+.permission-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.permission-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.permission-badge.allowed {
+  background: rgba(0, 184, 148, 0.15);
   color: #00b894;
 }
 
-.permission-status.denied {
+.permission-badge.denied {
+  background: rgba(231, 76, 60, 0.15);
   color: #e74c3c;
 }
 
-.date {
-  color: #999;
-  font-size: 13px;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-}
-
-.revoke-button {
-  padding: 6px 12px;
-  background: #1a3265;
-  color: #e6e6e6;
+.permission-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: #666;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  transition: background-color 0.2s, border-color 0.2s;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
 }
 
-.revoke-button:hover {
-  background: #234383;
-  border-color: rgba(255, 255, 255, 0.2);
+.permission-remove:hover {
+  background: rgba(231, 76, 60, 0.2);
+  color: #e74c3c;
+  border-color: rgba(231, 76, 60, 0.3);
 }
 
 .permissions-footer {
@@ -251,74 +279,118 @@
 
 /* Mobile responsive */
 @media (max-width: 768px) {
+  .permissions-view {
+    padding: 12px;
+  }
+
+  .permissions-header {
+    margin-bottom: 16px;
+  }
+
+  .permissions-header h2 {
+    font-size: 18px;
+  }
+
+  .permissions-header p {
+    font-size: 13px;
+  }
+
+  .content-resolver-info {
+    padding: 10px;
+    font-size: 13px;
+  }
+
   .permissions-controls {
-    flex-direction: column;
-    gap: 12px;
-    align-items: stretch;
-  }
-
-  .controls-left,
-  .controls-right {
-    width: 100%;
-  }
-
-  .controls-left {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    padding: 10px 12px;
     gap: 8px;
   }
 
+  .controls-left {
+    flex: 1;
+  }
+
+  .permission-count {
+    font-size: 13px;
+  }
+
   .controls-left select {
-    margin-left: 0;
-    width: 100%;
+    margin-left: 8px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  .app-filter-input {
+    padding: 4px 8px;
+    font-size: 13px;
+    max-width: none;
   }
 
   .clear-all-button {
-    width: 100%;
-  }
-
-  .table-header {
-    display: none;
-  }
-
-  .table-row {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    padding: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-    margin-bottom: 12px;
-  }
-
-  .table-row > span::before,
-  .table-row > div::before {
-    display: block;
-    content: attr(data-label);
-    font-weight: 600;
-    color: #4a90e2;
-    margin-bottom: 4px;
+    padding: 6px 12px;
     font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
 
-  .app-host::before {
-    content: "App / Host";
+  .permissions-list-items {
+    gap: 6px;
   }
 
-  .operation-type::before {
-    content: "Operation";
+  .permission-main {
+    padding: 8px 10px;
+    gap: 8px;
   }
 
-  .permission-status::before {
-    content: "Status";
+  .permission-app {
+    font-size: 13px;
+    margin-bottom: 2px;
   }
 
-  .date::before {
-    content: "Date Saved";
+  .permission-details {
+    gap: 4px;
   }
 
-  .actions::before {
-    content: "Actions";
+  .permission-op {
+    font-size: 11px;
+  }
+
+  .permission-kind {
+    font-size: 9px;
+    padding: 1px 5px;
+  }
+
+  .permission-time {
+    font-size: 10px;
+  }
+
+  .permission-badge {
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+
+  .permission-remove {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
+  }
+
+  .permissions-footer {
+    margin-top: 16px;
+    padding: 12px;
+  }
+
+  .footer-note {
+    font-size: 12px;
+  }
+
+  .no-permissions {
+    padding: 32px 16px;
+  }
+
+  .no-permissions h3 {
+    font-size: 16px;
+  }
+
+  .no-permissions p {
+    font-size: 13px;
   }
 }

@@ -6,6 +6,7 @@ import { ConsoleProvider }     from '@/context/console.js'
 import { NodeProvider }        from '@/context/node.js'
 import { SettingsProvider }    from '@/context/settings.js'
 import { PermissionsProvider } from '@/context/permissions.js'
+import { ErrorBoundary }       from '@/components/util/error-boundary.js'
 
 import './styles/global.css'
 import './styles/layout.css'
@@ -26,14 +27,16 @@ const root = createRoot(container)
 // Render the app.
 root.render(
   <StrictMode>
-    <SettingsProvider>
-      <PermissionsProvider>
-        <ConsoleProvider>
-          <NodeProvider>
-            <App />
-          </NodeProvider>
-        </ConsoleProvider>
-      </PermissionsProvider>
-    </SettingsProvider>
+    <ErrorBoundary>
+      <SettingsProvider>
+        <PermissionsProvider>
+          <ConsoleProvider>
+            <NodeProvider>
+              <App />
+            </NodeProvider>
+          </ConsoleProvider>
+        </PermissionsProvider>
+      </SettingsProvider>
+    </ErrorBoundary>
   </StrictMode>
 )

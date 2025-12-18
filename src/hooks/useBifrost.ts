@@ -6,6 +6,7 @@ import { decode_share_pkg } from '@frostr/bifrost/encoder'
 import { convert_pubkey }   from '@frostr/bifrost/util'
 import { useWebConsole }    from '@/context/console.js'
 import { useSettings }      from '@/context/settings.js'
+import { STORAGE_KEYS }     from '@/const.js'
 
 import type {
   GroupPackage,
@@ -56,6 +57,11 @@ export function useBifrost () : BifrostNodeAPI {
       logger.add('bifrost node initialized', 'info')
       setPeers(_client.peers.slice())
       setStatus('online')
+
+      // Ping all peers using _client directly (not the state variable which may not be updated yet)
+      for (const peer of _client.peers) {
+        _client.req.ping(peer.pubkey)
+      }
     })
 
     _client.on('closed', () => {
@@ -67,18 +73,17 @@ export function useBifrost () : BifrostNodeAPI {
     })
 
     _client.on('/ping/handler/ret', () => {
-      console.log('ping/handler/ret', _client.peers)
       setPeers(_client.peers.slice())
     })
 
     _client.on('/ping/sender/ret', () => {
-      console.log('ping/sender/ret', _client.peers)
       setPeers(_client.peers.slice())
     })
 
     _client.on('*', (event, data) => {
       // Skip message events.
-      if (event === 'message') return
+      if (event === 'message')       return
+      if (event.startsWith('/echo')) return
       if (event.startsWith('/ping')) return
 
       let type: LogType = 'info' // Default log type
@@ -117,12 +122,39 @@ export function useBifrost () : BifrostNodeAPI {
     // Clear the node.
     setClient(null)
     // Clear session password on logout
-    sessionStorage.removeItem('igloo_session_password')
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_PASSWORD)
     if (!is_store_ready(settings.data)) {
       setStatus('init')
     } else {
       setStatus('locked')
     }
+  }
+
+  const lock = () => {
+    // Close the client connection if it exists
+    if (client !== null) {
+      try {
+        client.close()
+      } catch (e) {
+        // Ignore errors when closing
+      }
+    }
+    // Clear the node state
+    setClient(null)
+    // Clear session password from sessionStorage
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_PASSWORD)
+    // Also clear the Android session backup if running in WebView
+    // This prevents auto-unlock after app restart
+    if (typeof window !== 'undefined' && (window as any).StorageBridge?.clearSessionStorageAndBackup) {
+      try {
+        (window as any).StorageBridge.clearSessionStorageAndBackup()
+      } catch (e) {
+        // Ignore errors - may not be running in Android WebView
+      }
+    }
+    // Set status to locked (settings should still be ready)
+    setStatus('locked')
+    logger.add('node locked by user', 'info')
   }
 
   const ping = (pubkey : string) => {
@@ -155,7 +187,7 @@ export function useBifrost () : BifrostNodeAPI {
       return
     }
     // Store password in sessionStorage for auto-unlock after URI refresh
-    sessionStorage.setItem('igloo_session_password', password)
+    sessionStorage.setItem(STORAGE_KEYS.SESSION_PASSWORD, password)
     // Decode the share.
     const share = decode_share_pkg(decrypted)
     // Start the node with the share.
@@ -174,7 +206,7 @@ export function useBifrost () : BifrostNodeAPI {
     reset()
   }, [ settings.data.peers, settings.data.relays ])
 
-  return { clear, client, peers, ping, reset, status, unlock }
+  return { clear, client, lock, peers, ping, reset, status, unlock }
 }
 
 function is_store_ready (
@@ -188,16 +220,12 @@ function get_node_status (
   settings : SettingsData
 ) : NodeStatus {
   if (!is_store_ready(settings)) {
-    console.log('disabled')
     return 'disabled'
   } else if (client === null) {
-    console.log('locked')
     return 'locked'
   } else if (client.is_ready) {
-    console.log('online')
     return 'online'
   } else {
-    console.log('offline')
     return 'offline'
   }
 }

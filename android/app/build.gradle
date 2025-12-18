@@ -3,6 +3,13 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Load keystore properties if available
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = 'com.frostr.igloo'
     compileSdk = 35
@@ -13,6 +20,17 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
     }
 
     buildTypes {
@@ -26,6 +44,9 @@ android {
             minifyEnabled = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             debuggable = false
+            if (keystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            }
             // ProGuard will strip debug logging in release builds
         }
     }
@@ -38,6 +59,28 @@ android {
     }
 }
 
+// Validate required asset files exist before build
+task validateAssets {
+    doLast {
+        def assetsDir = file('src/main/assets')
+        def requiredFiles = ['welcome.json', 'defaults.json']
+
+        requiredFiles.each { fileName ->
+            def assetFile = new File(assetsDir, fileName)
+            if (!assetFile.exists()) {
+                throw new GradleException("Required asset file missing: ${fileName}\n" +
+                    "Expected location: ${assetFile.absolutePath}")
+            }
+            println "✓ Found required asset: ${fileName}"
+        }
+    }
+}
+
+// Run validation before processing resources
+tasks.matching { it.name.startsWith('merge') && it.name.endsWith('Resources') }.configureEach {
+    dependsOn validateAssets
+}
+
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
@@ -48,8 +91,8 @@ dependencies {
     // WebSocket communication
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
-    // Secure storage
-    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+    // Secure storage (stable version)
+    implementation 'androidx.security:security-crypto:1.0.0'
 
     // Modern CameraX API
     implementation 'androidx.camera:camera-core:1.4.1'

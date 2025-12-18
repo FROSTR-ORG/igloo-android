@@ -15,15 +15,15 @@ export function PermissionsView(): ReactElement {
   const permissions_api = usePermissions()
   const [ permissions, set_permissions ] = useState<Permission[]>([])
   const [ loading, set_loading ] = useState(true)
-  const [ show_filter, set_show_filter ] = useState<'all' | 'allowed' | 'denied'>('all')
+  const [ app_filter, set_app_filter ] = useState('')
 
   const load_permissions = async () => {
     try {
       set_loading(true)
       const all_perms = await permissions_api.list_permissions()
       set_permissions(all_perms)
-    } catch (error) {
-      console.error('Failed to load permissions:', error)
+    } catch {
+      // Failed to load permissions
     } finally {
       set_loading(false)
     }
@@ -38,10 +38,8 @@ export function PermissionsView(): ReactElement {
       // IMPORTANT: Pass the kind parameter to properly match kind-specific permissions
       await permissions_api.revoke_permission(permission.appId, permission.type, permission.kind)
       await load_permissions() // Refresh the list
-      const kindStr = permission.kind !== undefined ? `:${permission.kind}` : ''
-      console.log(`Removed permission: ${permission.appId}:${permission.type}${kindStr}`)
-    } catch (error) {
-      console.error('Failed to remove permission:', error)
+    } catch {
+      // Failed to remove permission
     }
   }
 
@@ -53,20 +51,27 @@ export function PermissionsView(): ReactElement {
           await permissions_api.revoke_permission(permission.appId, permission.type, permission.kind)
         }
         await load_permissions()
-        console.log('All permissions cleared')
-      } catch (error) {
-        console.error('Failed to clear permissions:', error)
+      } catch {
+        // Failed to clear permissions
       }
     }
   }
 
   const format_date = (timestamp: number) => {
+    const now = Date.now()
+    const diff = now - timestamp
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+
+    if (minutes < 1) return 'just now'
+    if (minutes < 60) return `${minutes}m ago`
+    if (hours < 24) return `${hours}h ago`
+    if (days < 7) return `${days}d ago`
+
     return new Date(timestamp).toLocaleDateString('en-US', {
-      year   : 'numeric',
-      month  : 'short',
-      day    : 'numeric',
-      hour   : '2-digit',
-      minute : '2-digit'
+      month: 'short',
+      day: 'numeric'
     })
   }
 
@@ -78,12 +83,10 @@ export function PermissionsView(): ReactElement {
     return appId
   }
 
-  // Filter permissions based on selected filter
+  // Filter permissions based on app ID prefix match
   const filtered_permissions = permissions.filter(p => {
-    if (show_filter === 'all') return true
-    if (show_filter === 'allowed') return p.allowed === true
-    if (show_filter === 'denied') return p.allowed === false
-    return true
+    if (app_filter === '') return true
+    return p.appId.toLowerCase().startsWith(app_filter.toLowerCase())
   })
 
   if (loading) {
@@ -99,35 +102,24 @@ export function PermissionsView(): ReactElement {
     <div className="permissions-view">
       <div className="permissions-header">
         <h2>Saved Permissions</h2>
-        <p>Apps with saved permissions won't prompt you again - they'll use your previous choice.</p>
-        <p className="content-resolver-info">
-          <strong>Content Resolver:</strong> Enables background operations for compatible Nostr clients.
-        </p>
+        <p>Apps with saved permissions will be listed here.</p>
       </div>
 
       {permissions.length === 0 ? (
         <div className="no-permissions">
           <h3>No Saved Permissions</h3>
-          <p>When you check "Remember my choice" during signing prompts, apps will be listed here.</p>
-          <p>Saved permissions enable seamless background operations via Content Resolver.</p>
         </div>
       ) : (
         <div className="permissions-list">
           <div className="permissions-controls">
             <div className="controls-left">
-              <span className="permission-count">
-                {filtered_permissions.length} permission{filtered_permissions.length !== 1 ? 's' : ''}
-                {show_filter !== 'all' && ` (${show_filter})`}
-              </span>
-              <select
-                value={show_filter}
-                onChange={(e) => set_show_filter(e.target.value as any)}
-                style={{ marginLeft: '12px', padding: '4px' }}
-              >
-                <option value="all">All</option>
-                <option value="allowed">Allowed</option>
-                <option value="denied">Denied</option>
-              </select>
+              <input
+                type="text"
+                value={app_filter}
+                onChange={(e) => set_app_filter(e.target.value)}
+                placeholder="Filter by app ID..."
+                className="app-filter-input"
+              />
             </div>
             <div className="controls-right">
               <button
@@ -141,43 +133,35 @@ export function PermissionsView(): ReactElement {
             </div>
           </div>
 
-          <div className="permissions-table">
-            <div className="table-header">
-              <span>App / Host</span>
-              <span>Operation</span>
-              <span>Status</span>
-              <span>Date Saved</span>
-              <span>Actions</span>
-            </div>
-
+          <div className="permissions-list-items">
             {filtered_permissions.map((permission, index) => (
-              <div key={`${permission.appId}-${permission.type}-${permission.kind}-${index}`} className="table-row">
-                <span className="app-host" title={format_app_host(permission.appId)}>
-                  {format_app_host(permission.appId)}
-                </span>
-                <span className="operation-type">
-                  {format_operation_type(permission.type)}
-                  {permission.kind !== undefined && (
-                    <span className="event-kind" title={`Event Kind ${permission.kind}`}>
-                      {getEventKindLabel(permission.kind)}
+              <div key={`${permission.appId}-${permission.type}-${permission.kind}-${index}`} className="permission-card">
+                <div className="permission-main">
+                  <div className="permission-info">
+                    <div className="permission-app">{format_app_host(permission.appId)}</div>
+                    <div className="permission-details">
+                      <span className="permission-op">{format_operation_type(permission.type)}</span>
+                      {permission.kind !== undefined && (
+                        <span className="permission-kind">{getEventKindLabel(permission.kind)}</span>
+                      )}
+                      <span className="permission-time" title={new Date(permission.timestamp).toISOString()}>
+                        {format_date(permission.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="permission-actions">
+                    <span className={`permission-badge ${permission.allowed ? 'allowed' : 'denied'}`}>
+                      {permission.allowed ? 'Allowed' : 'Denied'}
                     </span>
-                  )}
-                </span>
-                <span className={`permission-status ${permission.allowed ? 'allowed' : 'denied'}`}>
-                  {permission.allowed ? '✅ Allowed' : '❌ Denied'}
-                </span>
-                <span className="date" title={new Date(permission.timestamp).toISOString()}>
-                  {format_date(permission.timestamp)}
-                </span>
-                <div className="actions">
-                  <button
-                    className="revoke-button"
-                    onClick={() => handle_revoke_permission(permission)}
-                    type="button"
-                    title="Remove saved permission - app will prompt again"
-                  >
-                    Remove
-                  </button>
+                    <button
+                      className="permission-remove"
+                      onClick={() => handle_revoke_permission(permission)}
+                      type="button"
+                      title="Remove saved permission"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

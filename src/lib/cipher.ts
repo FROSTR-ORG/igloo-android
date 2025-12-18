@@ -1,13 +1,13 @@
 import { Buff }       from '@cmdcode/buff'
-import { cbc }        from '@noble/ciphers/aes'
-import { chacha20 }   from '@noble/ciphers/chacha'
-import { equalBytes } from '@noble/ciphers/utils'
+import { cbc }        from '@noble/ciphers/aes.js'
+import { chacha20 }   from '@noble/ciphers/chacha.js'
+import { equalBytes } from '@noble/ciphers/utils.js'
 import { base64 }     from '@scure/base'
 
 import {
   concatBytes,
   randomBytes
-} from '@noble/hashes/utils'
+} from '@noble/hashes/utils.js'
 
 import * as utils from './util.js'
 
@@ -40,17 +40,13 @@ export function nip44_decrypt (
   secret  : string,
   payload : string
 ): string {
-  console.log('[cipher] nip44_decrypt input payload length:', payload.length)
   const { nonce, ciphertext, mac } = utils.decode_payload(payload)
   const convo_key      = utils.get_conversation_key(secret)
   const ctx            = utils.get_message_keys(convo_key, nonce)
   const calculated_mac = utils.hmac_aad(ctx.hmac_key, ciphertext, nonce)
   if (!equalBytes(calculated_mac, mac)) throw new Error('invalid MAC')
   const padded = chacha20(ctx.chacha_key, ctx.chacha_nonce, ciphertext)
-  const result = utils.unpad(padded)
-  console.log('[cipher] nip44_decrypt result type:', typeof result, 'length:', result.length)
-  console.log('[cipher] nip44_decrypt result preview:', result.substring(0, 100))
-  return result
+  return utils.unpad(padded)
 }
 
 /**
@@ -84,15 +80,11 @@ export function nip04_decrypt (
   secret  : string,
   content : string
 ) {
-  console.log('[cipher] nip04_decrypt input content length:', content.length)
   const [ encryped, iv ] = content.split('?iv=')
   const cbytes = Buff.base64(encryped)
   const sbytes = Buff.hex(secret)
   const vector = Buff.base64(iv)
   const decrypted = cbc(sbytes, vector).decrypt(cbytes)
-  const result = new Buff(decrypted).str
-  console.log('[cipher] nip04_decrypt result type:', typeof result, 'length:', result.length)
-  console.log('[cipher] nip04_decrypt result preview:', result.substring(0, 100))
-  return result
+  return new Buff(decrypted).str
 }
 

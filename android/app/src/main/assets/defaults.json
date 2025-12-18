@@ -1,0 +1,19 @@
+{
+  "permissions": [
+    { "type": "sign_event", "kind": 0 },
+    { "type": "sign_event", "kind": 1 },
+    { "type": "sign_event", "kind": 3 },
+    { "type": "sign_event", "kind": 4 },
+    { "type": "sign_event", "kind": 5 },
+    { "type": "sign_event", "kind": 6 },
+    { "type": "sign_event", "kind": 7 },
+    { "type": "sign_event", "kind": 13 },
+    { "type": "sign_event", "kind": 14 },
+    { "type": "sign_event", "kind": 22242 },
+    { "type": "nip04_encrypt" },
+    { "type": "nip04_decrypt" },
+    { "type": "nip44_encrypt" },
+    { "type": "nip44_decrypt" }
+  ],
+  "relays": []
+}

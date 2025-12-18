@@ -132,7 +132,7 @@
   }
 
   .console-controls .button,
-  .dashboard-container .button {
+  .dashboard-container .button:not(.copy-button) {
     width: 100%; /* Make buttons full-width */
     margin-top: 10px;
   }
@@ -369,6 +369,7 @@
   align-items: center;
   gap: 0.5rem;
   margin-top: 1rem;
+  overflow: hidden;
 }
 
 .node-inline-row.locked {
@@ -397,6 +398,7 @@
   text-overflow: ellipsis;
   cursor: pointer;
   flex: 1;
+  min-width: 0;
   border: 1px solid rgba(100, 140, 210, 0.2);
 }
 
@@ -407,16 +409,27 @@
 
 /* Copy Button - Override global button styles */
 .button.copy-button {
-  padding: 0.25rem 0.5rem !important;
-  font-size: 0.8rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  min-width: 1.5rem !important;
+  padding: 0 !important;
+  gap: 0 !important;
   background: rgba(30, 41, 59, 0.6) !important;
   border: 1px solid rgba(100, 140, 210, 0.3) !important;
   color: #e2e8f0 !important;
   border-radius: 0.25rem !important;
   cursor: pointer;
   flex: none !important;
-  width: auto !important;
-  min-width: auto !important;
+  flex-shrink: 0 !important;
+}
+
+.button.copy-button svg {
+  width: 14px !important;
+  height: 14px !important;
+  flex-shrink: 0;
 }
 
 .button.copy-button:hover {
@@ -436,6 +449,9 @@
   align-items: center;
   gap: 0.5rem;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-right: 0.25rem;
 }
 
 /* Responsive unlock form: input grows, button stays compact */
@@ -495,8 +511,14 @@
   }
 
   .button.copy-button {
-    padding: 0.2rem 0.4rem !important;
-    font-size: 0.75rem !important;
+    width: 1.4rem !important;
+    height: 1.4rem !important;
+    min-width: 1.4rem !important;
+  }
+
+  .button.copy-button svg {
+    width: 12px !important;
+    height: 12px !important;
   }
 
   .node-inline-row {

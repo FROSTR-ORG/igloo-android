@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import android.webkit.JavascriptInterface
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 
@@ -29,7 +29,7 @@ class StorageBridge(private val context: Context) {
     }
 
     private val gson = Gson()
-    private val masterKey: MasterKey
+    private val masterKeyAlias: String
 
     // Encrypted SharedPreferences instances
     private val localStoragePrefs: SharedPreferences
@@ -37,30 +37,26 @@ class StorageBridge(private val context: Context) {
 
     init {
         try {
-            // Create master key for encryption
-            masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
+            // Create master key alias for encryption (uses AES256-GCM)
+            masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
 
             // Create encrypted SharedPreferences for localStorage
             localStoragePrefs = EncryptedSharedPreferences.create(
-                context,
                 LOCAL_STORAGE_PREFS,
-                masterKey,
+                masterKeyAlias,
+                context,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
 
             // Create encrypted SharedPreferences for sessionStorage
             sessionStoragePrefs = EncryptedSharedPreferences.create(
-                context,
                 SESSION_STORAGE_PREFS,
-                masterKey,
+                masterKeyAlias,
+                context,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-
-            Log.d(TAG, "Secure storage bridge initialized successfully")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize secure storage bridge", e)
@@ -78,13 +74,6 @@ class StorageBridge(private val context: Context) {
     @JavascriptInterface
     fun setItem(storageType: String, key: String, value: String): String {
         return try {
-            // Debug logging for igloo-pwa data
-            if (key == "igloo-pwa") {
-                Log.d(TAG, "DEBUG: Storing igloo-pwa length: ${value.length}")
-                Log.d(TAG, "DEBUG: Contains 'share' field: ${value.contains("\"share\":")}")
-                Log.d(TAG, "DEBUG: Full value: $value")
-            }
-
             // Validate parameters
             if (key.isEmpty()) {
                 return gson.toJson(StorageResult.Error("Key cannot be empty"))
@@ -115,26 +104,9 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun getItem(storageType: String, key: String): String? {
-        Log.d(TAG, "Getting item from $storageType storage: $key")
-
         return try {
             val prefs = getPreferences(storageType)
-            val value = prefs.getString(key, null)
-
-            if (value != null) {
-                Log.d(TAG, "Retrieved item: $key from $storageType storage")
-                // Debug logging for igloo-pwa data
-                if (key == "igloo-pwa") {
-                    Log.d(TAG, "DEBUG: Retrieved igloo-pwa length: ${value.length}")
-                    Log.d(TAG, "DEBUG: Contains 'share' field: ${value.contains("\"share\":")}")
-                    Log.d(TAG, "DEBUG: Full value: $value")
-                }
-            } else {
-                Log.d(TAG, "Item not found: $key in $storageType storage")
-            }
-
-            value
-
+            prefs.getString(key, null)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get item from storage", e)
             null
@@ -149,15 +121,10 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun removeItem(storageType: String, key: String): String {
-        Log.d(TAG, "Removing item from $storageType storage: $key")
-
         return try {
             val prefs = getPreferences(storageType)
             prefs.edit().remove(key).apply()
-
-            Log.d(TAG, "Successfully removed item: $key from $storageType storage")
             gson.toJson(StorageResult.Success("Item removed"))
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to remove item from storage", e)
             gson.toJson(StorageResult.Error("Remove failed: ${e.message}"))
@@ -171,15 +138,10 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun clear(storageType: String): String {
-        Log.d(TAG, "Clearing all items from $storageType storage")
-
         return try {
             val prefs = getPreferences(storageType)
             prefs.edit().clear().apply()
-
-            Log.d(TAG, "Successfully cleared $storageType storage")
             gson.toJson(StorageResult.Success("Storage cleared"))
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear storage", e)
             gson.toJson(StorageResult.Error("Clear failed: ${e.message}"))
@@ -194,21 +156,10 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun key(storageType: String, index: Int): String? {
-        Log.d(TAG, "Getting key at index $index from $storageType storage")
-
         return try {
             val prefs = getPreferences(storageType)
-            val keys = prefs.all.keys.toList().sorted() // Ensure consistent ordering
-
-            if (index >= 0 && index < keys.size) {
-                val key = keys[index]
-                Log.d(TAG, "Key at index $index: $key")
-                key
-            } else {
-                Log.d(TAG, "Index $index out of bounds (size: ${keys.size})")
-                null
-            }
-
+            val keys = prefs.all.keys.toList().sorted()
+            if (index >= 0 && index < keys.size) keys[index] else null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get key at index", e)
             null
@@ -222,15 +173,9 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun length(storageType: String): Int {
-        Log.d(TAG, "Getting length of $storageType storage")
-
         return try {
             val prefs = getPreferences(storageType)
-            val length = prefs.all.size
-
-            Log.d(TAG, "$storageType storage length: $length")
-            length
-
+            prefs.all.size
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get storage length", e)
             0
@@ -244,14 +189,10 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun getAllKeys(storageType: String): String {
-        Log.d(TAG, "Getting all keys from $storageType storage")
-
         return try {
             val prefs = getPreferences(storageType)
             val keys = prefs.all.keys.toList().sorted()
-
             gson.toJson(keys)
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get all keys", e)
             gson.toJson(emptyList<String>())
@@ -265,8 +206,6 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun getStorageInfo(storageType: String): String {
-        Log.d(TAG, "Getting storage info for $storageType storage")
-
         return try {
             val prefs = getPreferences(storageType)
             val allData = prefs.all
@@ -296,12 +235,8 @@ class StorageBridge(private val context: Context) {
      * Clear session storage (called on app restart)
      */
     fun clearSessionStorage() {
-        Log.d(TAG, "Clearing session storage on app restart")
-
         try {
             sessionStoragePrefs.edit().clear().apply()
-            Log.d(TAG, "Session storage cleared successfully (backup preserved)")
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear session storage", e)
         }
@@ -312,22 +247,15 @@ class StorageBridge(private val context: Context) {
      * Called during app pause to preserve session data across process termination
      */
     fun backupSessionStorage() {
-        Log.d(TAG, "Backing up session storage")
-
         try {
             val sessionData = sessionStoragePrefs.all
             if (sessionData.isNotEmpty()) {
                 val backupJson = gson.toJson(sessionData)
                 val timestamp = System.currentTimeMillis()
-
                 localStoragePrefs.edit()
                     .putString(SESSION_BACKUP_KEY, backupJson)
                     .putLong(SESSION_BACKUP_TIMESTAMP_KEY, timestamp)
                     .apply()
-
-                Log.d(TAG, "Session storage backed up successfully (${sessionData.size} items)")
-            } else {
-                Log.d(TAG, "No session data to backup")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to backup session storage", e)
@@ -340,19 +268,13 @@ class StorageBridge(private val context: Context) {
      * @return true if backup was restored, false if no valid backup found
      */
     fun restoreSessionStorage(): Boolean {
-        Log.d(TAG, "Attempting to restore session storage from backup")
-
         try {
             val backupJson = localStoragePrefs.getString(SESSION_BACKUP_KEY, null)
             val timestamp = localStoragePrefs.getLong(SESSION_BACKUP_TIMESTAMP_KEY, 0)
 
-            if (backupJson == null) {
-                Log.d(TAG, "No session backup found")
-                return false
-            }
+            if (backupJson == null) return false
 
             if (!isRecentBackup(timestamp)) {
-                Log.d(TAG, "Session backup expired, cleaning up")
                 clearSessionBackup()
                 return false
             }
@@ -366,13 +288,11 @@ class StorageBridge(private val context: Context) {
                 editor.putString(key, value.toString())
             }
             editor.apply()
-
-            Log.d(TAG, "Session storage restored successfully (${sessionData.size} items)")
             return true
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to restore session storage", e)
-            clearSessionBackup() // Clean up corrupted backup
+            clearSessionBackup()
             return false
         }
     }
@@ -382,25 +302,18 @@ class StorageBridge(private val context: Context) {
      */
     private fun isRecentBackup(timestamp: Long): Boolean {
         val age = System.currentTimeMillis() - timestamp
-        val isRecent = age <= BACKUP_TIMEOUT_MS
-
-        Log.d(TAG, "Backup age: ${age / 1000}s (timeout: ${BACKUP_TIMEOUT_MS / 1000}s) - Recent: $isRecent")
-        return isRecent
+        return age <= BACKUP_TIMEOUT_MS
     }
 
     /**
      * Clear session backup data from local storage
      */
     fun clearSessionBackup() {
-        Log.d(TAG, "Clearing session backup")
-
         try {
             localStoragePrefs.edit()
                 .remove(SESSION_BACKUP_KEY)
                 .remove(SESSION_BACKUP_TIMESTAMP_KEY)
                 .apply()
-
-            Log.d(TAG, "Session backup cleared successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear session backup", e)
         }
@@ -411,14 +324,10 @@ class StorageBridge(private val context: Context) {
      */
     @JavascriptInterface
     fun clearSessionStorageAndBackup(): String {
-        Log.d(TAG, "Clearing session storage and backup (explicit logout)")
-
         return try {
-            clearSessionStorage() // Existing method
-            clearSessionBackup()  // New method
-            Log.d(TAG, "Session storage and backup cleared")
+            clearSessionStorage()
+            clearSessionBackup()
             gson.toJson(StorageResult.Success("Session storage and backup cleared"))
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear session storage and backup", e)
             gson.toJson(StorageResult.Error("Clear failed: ${e.message}"))

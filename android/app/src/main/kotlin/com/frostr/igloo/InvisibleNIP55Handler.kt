@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.frostr.igloo.bridges.StorageBridge
 import com.frostr.igloo.NIP55PermissionDialog.PermissionStorage
+import com.frostr.igloo.util.NIP55Deduplicator
 
 /**
  * Invisible NIP-55 Intent Handler - Minimal Routing Layer
@@ -140,64 +141,15 @@ class InvisibleNIP55Handler : Activity() {
 
     /**
      * Generate a deduplication key for a request based on operation content
-     * This prevents duplicate requests with different request IDs from being processed
-     *
-     * Deduplication strategies by operation type:
-     * - sign_event: callingApp + type + event ID (from event JSON)
-     * - nip04_decrypt/nip44_decrypt: callingApp + type + ciphertext + pubkey
-     * - nip04_encrypt/nip44_encrypt: callingApp + type + plaintext + pubkey
-     * - decrypt_zap_event: callingApp + type + event JSON
-     * - get_public_key: callingApp + type
+     * Delegates to shared NIP55Deduplicator utility
      */
     private fun getDeduplicationKey(request: NIP55Request): String {
-        return try {
-            when (request.type) {
-                "sign_event" -> {
-                    // Deduplicate by event ID
-                    val eventJson = request.params["event"]
-                    if (eventJson != null) {
-                        val eventMap = gson.fromJson<Map<String, Any>>(eventJson, Map::class.java)
-                        val eventId = eventMap["id"] as? String
-                        "${request.callingApp}:${request.type}:${eventId ?: eventJson.hashCode()}"
-                    } else {
-                        "${request.callingApp}:${request.type}:${request.id}"
-                    }
-                }
-
-                "nip04_decrypt", "nip44_decrypt" -> {
-                    // Deduplicate by ciphertext + pubkey
-                    val ciphertext = request.params["ciphertext"]
-                    val pubkey = request.params["pubkey"]
-                    "${request.callingApp}:${request.type}:${ciphertext?.hashCode()}:${pubkey}"
-                }
-
-                "nip04_encrypt", "nip44_encrypt" -> {
-                    // Deduplicate by plaintext + pubkey
-                    val plaintext = request.params["plaintext"]
-                    val pubkey = request.params["pubkey"]
-                    "${request.callingApp}:${request.type}:${plaintext?.hashCode()}:${pubkey}"
-                }
-
-                "decrypt_zap_event" -> {
-                    // Deduplicate by event JSON
-                    val eventJson = request.params["event"]
-                    "${request.callingApp}:${request.type}:${eventJson?.hashCode()}"
-                }
-
-                "get_public_key" -> {
-                    // Deduplicate by calling app + type only
-                    "${request.callingApp}:${request.type}"
-                }
-
-                else -> {
-                    // Fallback: use request ID
-                    "${request.callingApp}:${request.type}:${request.id}"
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to generate deduplication key, using request ID", e)
-            "${request.callingApp}:${request.type}:${request.id}"
-        }
+        return NIP55Deduplicator.getDeduplicationKey(
+            callingApp = request.callingApp,
+            operationType = request.type,
+            params = request.params,
+            fallbackId = request.id
+        )
     }
 
     /**

@@ -21,6 +21,7 @@ export interface WebConsoleAPI {
 export interface BifrostNodeAPI {
   clear  : () => void
   client : BifrostNode | null
+  lock   : () => void
   peers  : PeerData[]
   ping   : (pubkey : string) => void
   reset  : () => void
