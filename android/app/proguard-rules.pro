@@ -52,10 +52,18 @@
 
 # Keep NIP-55 data classes and new request structure
 -keep class com.frostr.igloo.NIP55Request { *; }
+-keep class com.frostr.igloo.NIP55Result { *; }
 -keep class com.frostr.igloo.bridges.NIP55RequestContext { *; }
+
+# Keep camera bridge data classes for Gson deserialization
+-keep class com.frostr.igloo.bridges.MediaStreamConstraints { *; }
 
 # Keep WelcomeDialog inner classes for Gson deserialization
 -keep class com.frostr.igloo.WelcomeDialog$WelcomeContent { *; }
+
+# Keep NIP55PermissionDialog inner classes for Gson deserialization
+-keep class com.frostr.igloo.NIP55PermissionDialog$PermissionStorage { *; }
+-keep class com.frostr.igloo.NIP55PermissionDialog$Permission { *; }
 
 # Gson specific rules
 -keepattributes Signature
