@@ -87,27 +87,23 @@ export class SigningBatchQueue {
    * Returns true if reconnection succeeds within timeout
    */
   private async tryReconnect(): Promise<boolean> {
-    console.log('[BatchQueue] Attempting reconnect, is_ready:', this.node.is_ready)
-
     // Trigger reconnection
     try {
       this.node.connect()
     } catch (e) {
-      console.log('[BatchQueue] connect() threw:', e)
+      // connect() may throw if already connecting
     }
 
     // Wait for node to become ready (poll with timeout)
     const startTime = Date.now()
     while (Date.now() - startTime < this.RECONNECT_TIMEOUT_MS) {
       if (this.node.is_ready) {
-        console.log('[BatchQueue] Reconnected successfully')
         return true
       }
       // Wait 100ms before checking again
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
-    console.log('[BatchQueue] Reconnect timeout, is_ready:', this.node.is_ready)
     return false
   }
 
@@ -138,13 +134,10 @@ export class SigningBatchQueue {
     const eventIds = [...new Set(this.pendingByEventId.keys())]
 
     try {
-      console.log('[BatchQueue] Processing batch of', eventIds.length, 'eventIds, is_ready:', this.node.is_ready, 'failures:', this.consecutiveFailures)
-
       // If node reports disconnected OR we've had too many consecutive failures, try to reconnect
       const needsReconnect = !this.node.is_ready || this.consecutiveFailures >= this.MAX_FAILURES_BEFORE_RECONNECT
 
       if (needsReconnect) {
-        console.log('[BatchQueue] Connection appears dead, forcing reconnect')
         const reconnected = await this.tryReconnect()
         if (!reconnected) {
           const error = new Error('Bifrost node disconnected - reconnection failed')
@@ -186,7 +179,6 @@ export class SigningBatchQueue {
       if (!res.ok) {
         // Track failure - connection might be dead even though is_ready says true
         this.consecutiveFailures++
-        console.log('[BatchQueue] Batch returned error, failures now:', this.consecutiveFailures)
         const error = new Error(res.err)
         for (const eventId of eventIds) {
           this.rejectPending(eventId, error)
@@ -228,7 +220,6 @@ export class SigningBatchQueue {
     } catch (error) {
       // Track failure - likely timeout means connection is dead
       this.consecutiveFailures++
-      console.log('[BatchQueue] Batch threw exception, failures now:', this.consecutiveFailures, 'error:', error)
       const err = error instanceof Error ? error : new Error(String(error))
       for (const eventId of eventIds) {
         this.rejectPending(eventId, err)
