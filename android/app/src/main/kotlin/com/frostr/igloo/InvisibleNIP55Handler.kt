@@ -345,7 +345,7 @@ class InvisibleNIP55Handler : Activity() {
                 val single = completedResults[0]
                 putExtra("id", single.requestId)
                 // Return Igloo's package name (not the calling app's) so Amethyst knows which signer app to use for future requests
-                putExtra("package", "com.frostr.igloo")
+                putExtra("package", packageName)
                 if (single.error != null) {
                     putExtra("error", single.error)
                 } else if (single.result != null) {
@@ -430,7 +430,7 @@ class InvisibleNIP55Handler : Activity() {
 
         // Must launch MainActivity to show the dialog (Activity requirement)
         val dialogIntent = Intent(this, MainActivity::class.java).apply {
-            action = "com.frostr.igloo.SHOW_PERMISSION_DIALOG"
+            action = "$packageName.SHOW_PERMISSION_DIALOG"
             putExtra("app_id", originalRequest.callingApp)
             putExtra("permissions_json", permissionsJson)
             putExtra("is_bulk", true)
@@ -496,7 +496,7 @@ class InvisibleNIP55Handler : Activity() {
 
         // Must launch MainActivity to show the dialog
         val dialogIntent = Intent(this, MainActivity::class.java).apply {
-            action = "com.frostr.igloo.SHOW_PERMISSION_DIALOG"
+            action = "$packageName.SHOW_PERMISSION_DIALOG"
             putExtra("app_id", originalRequest.callingApp)
             putExtra("request_type", originalRequest.type)
             eventKind?.let { putExtra("event_kind", it) }
@@ -667,7 +667,7 @@ class InvisibleNIP55Handler : Activity() {
 
         // Launch MainActivity with proper flags for singleTask
         val mainIntent = Intent(this, MainActivity::class.java).apply {
-            action = "com.frostr.igloo.NIP55_SIGNING"
+            action = "$packageName.NIP55_SIGNING"
             putExtra("nip55_request_id", originalRequest.id)
             putExtra("nip55_request_type", originalRequest.type)
             putExtra("nip55_request_calling_app", originalRequest.callingApp)

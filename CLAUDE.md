@@ -24,8 +24,30 @@ The PWA is wrapped in an Android application shell that provides:
 
 ### Build and Development
 - `npm run dev` - Start development server with watch mode and hot reload (port 3000)
-- `npm run build` - Build production version to `dist/` directory
-- `npm run test` - Run test suite using tape
+- `npm run build` - Build PWA only to `dist/` directory
+- `npm run build:debug` - **Build PWA + copy to Android assets + build debug APK** (RECOMMENDED)
+- `npm run build:release` - Build PWA + copy to Android assets + build release APK
+
+### Build Flags
+The build script (`script/build.ts`) supports these flags:
+- `--debug` - Copy PWA to Android assets and build debug APK
+- `--release` - Copy PWA to Android assets and build release APK
+- `--install` - Also install APK to connected device after building
+
+**Examples:**
+```bash
+npm run build:debug              # Build debug APK
+npm run build -- --debug --install   # Build and install debug APK
+npm run build:release            # Build release APK
+```
+
+### ⚠️ CRITICAL: Always Use build.ts for Android Builds
+**NEVER** run `./gradlew assembleDebug` directly without first copying PWA assets. The build.ts script:
+1. Builds the PWA to `dist/`
+2. Copies assets to `android/app/src/main/assets/`
+3. Runs the Gradle build
+
+Running Gradle directly will use **stale PWA assets** and your changes won't appear in the APK.
 
 ### Utility Scripts
 - `npm run keygen` - Generate cryptographic keys
@@ -166,11 +188,13 @@ The bifrost node (`src/context/node.tsx`) has these states:
 
 ### Critical Warnings
 
-#### Package Name Must Be `com.frostr.igloo` (No Debug Suffix)
-- **NEVER** add `applicationIdSuffix ".debug"` to debug builds
-- NIP-55 clients (Amethyst) look for signer at exact package `com.frostr.igloo`
-- Adding suffix creates separate app with separate storage/permissions
-- Verify with: `adb shell dumpsys package com.frostr.igloo | grep "Package"`
+#### Debug vs Release Package Names
+- Debug builds use `com.frostr.igloo.debug` (via `applicationIdSuffix ".debug"`)
+- Release builds use `com.frostr.igloo`
+- The manifest uses `${applicationId}` placeholders so content providers work with either
+- Internal intents use `packageName` variable (not hardcoded strings)
+- Debug and release can be installed side-by-side (separate storage/permissions)
+- Verify package: `adb shell pm list packages | grep igloo`
 
 #### Always Get Fresh Logs
 - **NEVER** rely on old background bash output for debugging
@@ -217,19 +241,18 @@ NIP-55 Intent    Intent Parsing     Intent Forwarding  JavaScript    Bridge Proc
 ### Release Build Process
 
 **Prerequisites:**
-1. Build PWA: `npm run build`
-2. Verify keystore: `ls android/igloo-release.keystore`
+1. Verify keystore: `ls android/igloo-release.keystore`
+2. Verify keystore.properties: `ls android/keystore.properties`
 
 **Build Commands:**
 ```bash
-cd android
-./gradlew clean assembleRelease    # Build signed APK
-./gradlew installRelease           # Build and install
+npm run build:release              # Build PWA + copy assets + build release APK
+npm run build -- --release --install   # Build and install release APK
 ```
 
-**Output:** `app/build/outputs/apk/release/app-release.apk`
+**Output:** `android/app/build/outputs/apk/release/app-release.apk`
 
-**Verify signature:** `apksigner verify --verbose app/build/outputs/apk/release/app-release.apk`
+**Verify signature:** `apksigner verify --verbose android/app/build/outputs/apk/release/app-release.apk`
 
 **Version Management** (in `app/build.gradle`):
 - `versionCode` - Must increment for every release

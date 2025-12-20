@@ -393,15 +393,6 @@ cd android
 
 ## Troubleshooting
 
-### Package Name Issues
-**Problem**: NIP-55 signing not working with Amethyst
-**Cause**: Package name has `.debug` suffix
-**Solution**: Ensure package is exactly `com.frostr.igloo`
-**Verify**:
-```bash
-adb shell dumpsys package com.frostr.igloo | grep "Package"
-```
-
 ### Stale Logs
 **Problem**: Logs show old behavior that doesn't match current code
 **Cause**: Looking at cached/old log output

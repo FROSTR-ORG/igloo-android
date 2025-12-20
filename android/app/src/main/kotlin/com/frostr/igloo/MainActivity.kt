@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
         // startIglooBackgroundService()
 
         when (intent.action) {
-            "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
+            "$packageName.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request - showing native dialog")
                 // Dismiss keyboard immediately - it may be open from the calling app
@@ -129,7 +129,7 @@ class MainActivity : AppCompatActivity() {
                 ))
                 handlePermissionDialogRequest()
             }
-            "com.frostr.igloo.NIP55_SIGNING" -> {
+            "$packageName.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString(),
@@ -898,7 +898,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         when (intent.action) {
-            "com.frostr.igloo.SHOW_PERMISSION_DIALOG" -> {
+            "$packageName.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request in onNewIntent - showing native dialog")
                 // Dismiss keyboard immediately - it may be open from the calling app
@@ -909,7 +909,7 @@ class MainActivity : AppCompatActivity() {
                 ))
                 handlePermissionDialogRequest()
             }
-            "com.frostr.igloo.NIP55_SIGNING" -> {
+            "$packageName.NIP55_SIGNING" -> {
                 NIP55DebugLogger.logIntent("MAIN_RECEIVED_NEW", intent, mapOf(
                     "process" to "main",
                     "launchMode" to intent.flags.toString(),

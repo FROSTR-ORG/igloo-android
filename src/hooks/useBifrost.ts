@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 import { BifrostNode }      from '@frostr/bifrost'
 import { decrypt_content }  from '@/lib/enclave.js'
@@ -32,6 +32,12 @@ export function useBifrost () : BifrostNodeAPI {
   const [ peers, setPeers ]   = useState<PeerData[]>([])
   const [ status, setStatus ] = useState<NodeStatus>('init')
 
+  // Track reconnection state
+  const reconnectAttempts = useRef(0)
+  const reconnectTimer    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const maxReconnectAttempts = 5
+  const baseReconnectDelay   = 2000 // 2 seconds
+
   const logger   = useWebConsole()
   const settings = useSettings()
 
@@ -57,6 +63,9 @@ export function useBifrost () : BifrostNodeAPI {
       logger.add('bifrost node initialized', 'info')
       setPeers(_client.peers.slice())
       setStatus('online')
+
+      // Reset reconnection counter on successful connection
+      reconnectAttempts.current = 0
 
       // Ping all peers using _client directly (not the state variable which may not be updated yet)
       for (const peer of _client.peers) {
@@ -205,6 +214,54 @@ export function useBifrost () : BifrostNodeAPI {
   useEffect(() => {
     reset()
   }, [ settings.data.peers, settings.data.relays ])
+
+  // Auto-reconnect when connection drops
+  useEffect(() => {
+    // Only attempt reconnection if:
+    // 1. Status is 'offline' (not 'locked' or 'init')
+    // 2. We have a client (means we were previously connected)
+    // 3. We haven't exceeded max reconnection attempts
+    if (status !== 'offline' || client === null) {
+      return
+    }
+
+    if (reconnectAttempts.current >= maxReconnectAttempts) {
+      logger.add(`Max reconnection attempts (${maxReconnectAttempts}) reached`, 'error')
+      return
+    }
+
+    // Clear any existing timer
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current)
+    }
+
+    // Calculate delay with exponential backoff
+    const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts.current)
+    reconnectAttempts.current++
+
+    logger.add(`Connection lost. Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`, 'info')
+
+    reconnectTimer.current = setTimeout(() => {
+      reconnectTimer.current = null
+      if (client !== null) {
+        logger.add('Attempting to reconnect...', 'info')
+        try {
+          // Try to reconnect the existing client
+          client.connect()
+        } catch (e) {
+          logger.add('Reconnection failed, will retry', 'error')
+        }
+      }
+    }, delay)
+
+    // Cleanup timer on unmount or status change
+    return () => {
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = null
+      }
+    }
+  }, [ status, client ])
 
   return { clear, client, lock, peers, ping, reset, status, unlock }
 }

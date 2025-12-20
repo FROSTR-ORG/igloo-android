@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1]
+
+- Added a number of improvements to request de-duplication, rate-limiting, message-queuing, and connection failure detection / recovery.
+
 ## [0.1.0]
 
 Initial alpha release of Igloo Mobile.

@@ -34,7 +34,18 @@ export class BifrostSignDevice {
     const pubkey = this._node.group.group_pk.slice(2)
     const tmpl   = { content, created_at, kind, pubkey, tags }
     const id     = get_event_id(tmpl)
-    const res    = await this._node.req.sign(id)
+
+    // Use signing queue if available (serializes requests and deduplicates)
+    const queue = window.nostr?.bridge?.batchQueue
+    if (queue) {
+      const entry = await queue.add(id)
+      const sig = entry[2]
+      if (!sig) throw new Error('signature missing from response')
+      return { ...tmpl, id, sig }
+    }
+
+    // Fallback to direct signing (when queue not available)
+    const res = await this._node.req.sign(id)
     if (!res.ok) throw new Error(res.err)
     const payload = res.data.at(0)
     if (payload?.at(0) !== id)               throw new Error('event id mismatch')

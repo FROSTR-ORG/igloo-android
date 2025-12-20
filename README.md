@@ -116,18 +116,26 @@ adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
 There are also a number of scripts for builds and releases:
 
 ```bash
- # Build the PWA from the `/src` folder.
+# Build the PWA from the `/src` folder.
 npm run build
 
-# Build the debug APK (includes PWA build).
+# Build the debug APK (includes PWA build and asset copy).
 npm run build:debug
+
+# Build and install debug APK to connected device.
+npm run build -- --debug --install
 
 # Build and sign the release APK.
 npm run build:release
 
+# Build and install release APK to connected device.
+npm run build -- --release --install
+
 # Create a new github release using github actions.
 npm run release
 ```
+
+**Note**: Always use `npm run build:debug` or `npm run build:release` instead of running `./gradlew` directly. The build script ensures PWA assets are copied to the Android project before building.
 
 ## Documentation
 

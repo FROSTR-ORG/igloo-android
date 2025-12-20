@@ -1,6 +1,6 @@
 {
   "name": "@frostr/igloo-mobile",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A NIP-55 android signing device for Nostr, powered by FROSTR.",
   "author": "Christopher Scott",
   "license": "MIT",

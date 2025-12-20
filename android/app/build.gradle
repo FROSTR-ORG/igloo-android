@@ -37,8 +37,7 @@ android {
         debug {
             minifyEnabled = false
             debuggable = true
-            applicationIdSuffix = ".debug"  // Allows debug and release to be installed side-by-side
-            // Keep debug logging enabled in debug builds
+            applicationIdSuffix = ".debug"
         }
         release {
             minifyEnabled = true

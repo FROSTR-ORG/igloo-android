@@ -1,5 +1,6 @@
 import type { BifrostNode } from '@frostr/bifrost'
 import type { NIP55Request, NIP55Result } from '@/types/index.js'
+import type { SigningBatchQueue } from '@/lib/batch-signer.js'
 
 /**
  * Clean internal bridge interface for NIP-55 operations
@@ -14,6 +15,9 @@ export interface NIP55Bridge {
 
   /** Execute automatic signing without user interaction */
   autoSign: (request: NIP55Request) => Promise<NIP55Result>
+
+  /** Batch signing queue for reducing network requests */
+  batchQueue: SigningBatchQueue | null
 }
 
 /**

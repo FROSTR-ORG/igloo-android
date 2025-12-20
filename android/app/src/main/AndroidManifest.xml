@@ -37,7 +37,7 @@
 
             <!-- Handle update app shortcut -->
             <intent-filter>
-                <action android:name="com.frostr.igloo.UPDATE_APP" />
+                <action android:name="${applicationId}.UPDATE_APP" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
@@ -84,7 +84,7 @@
         <!-- NIP-55 ContentProvider for background signing (Amethyst compatibility) -->
         <provider
             android:name=".NIP55ContentProvider"
-            android:authorities="com.frostr.igloo.GET_PUBLIC_KEY;com.frostr.igloo.SIGN_EVENT;com.frostr.igloo.NIP04_ENCRYPT;com.frostr.igloo.NIP04_DECRYPT;com.frostr.igloo.NIP44_ENCRYPT;com.frostr.igloo.NIP44_DECRYPT;com.frostr.igloo.DECRYPT_ZAP_EVENT"
+            android:authorities="${applicationId}.GET_PUBLIC_KEY;${applicationId}.SIGN_EVENT;${applicationId}.NIP04_ENCRYPT;${applicationId}.NIP04_DECRYPT;${applicationId}.NIP44_ENCRYPT;${applicationId}.NIP44_DECRYPT;${applicationId}.DECRYPT_ZAP_EVENT"
             android:exported="true"
             android:enabled="true" />
 

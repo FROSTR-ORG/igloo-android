@@ -6,18 +6,56 @@ This guide covers the complete development workflow for building, deploying, and
 
 ## Build Process
 
-### 1. PWA Build (TypeScript/React)
+### ⚠️ CRITICAL: Always Use the Build Script
 
-Build the PWA from the **root PWA directory** (`/home/cscott/Repos/frostr/pwa`):
+**NEVER** run `./gradlew assembleDebug` directly. This will use **stale PWA assets** and your changes won't appear in the APK.
+
+**Always use the build.ts script** which:
+1. Builds the PWA to `dist/`
+2. Copies assets to `android/app/src/main/assets/`
+3. Runs the Gradle build
+
+### Quick Build Commands
 
 ```bash
-cd /home/cscott/Repos/frostr/pwa
+# Debug APK (recommended for development)
+npm run build:debug
+
+# Debug APK + install to device
+npm run build -- --debug --install
+
+# Release APK
+npm run build:release
+
+# Release APK + install to device
+npm run build -- --release --install
+```
+
+### Build Script Options
+
+The build script (`script/build.ts`) supports these flags:
+- `--debug` - Copy PWA to Android assets and build debug APK
+- `--release` - Copy PWA to Android assets and build release APK
+- `--install` - Also install APK to connected device after building
+- `--watch` - Watch mode for PWA development (no Android build)
+
+### Output Locations
+
+- **Debug APK**: `android/app/build/outputs/apk/debug/app-debug.apk`
+- **Release APK**: `android/app/build/outputs/apk/release/app-release.apk`
+- **PWA dist**: `dist/` directory
+
+### PWA-Only Build
+
+If you only need to build the PWA (without Android):
+
+```bash
 npm run build
 ```
 
 **Output**: Creates `dist/` directory with:
 - `app.js` - Main application bundle
-- `sw.js` - Service worker
+- `app.js.map` - Source map
 - `index.html` - Entry point
 - `manifest.json` - PWA manifest
 - `styles/` - CSS files
@@ -26,41 +64,6 @@ npm run build
 **TypeScript Type Check** (optional but recommended):
 ```bash
 npx tsc --noEmit
-```
-
-### 2. Android APK Build
-
-Build the Android wrapper from the **android directory** (`/home/cscott/Repos/frostr/pwa/android`):
-
-```bash
-cd /home/cscott/Repos/frostr/pwa/android
-./gradlew assembleDebug
-```
-
-**Output**: Creates APK at `app/build/outputs/apk/debug/app-debug.apk`
-
-**Important**: The Gradle build automatically copies PWA assets from `../dist/` into the APK during the build process.
-
-### 3. Clean Build (When Needed)
-
-If you update the PWA and Gradle shows everything as `UP-TO-DATE`, do a clean build:
-
-```bash
-cd /home/cscott/Repos/frostr/pwa/android
-./gradlew clean
-./gradlew assembleDebug
-```
-
-### 4. Complete Build Script (All-in-One)
-
-From the **android directory**:
-
-```bash
-cd /home/cscott/Repos/frostr/pwa && \
-npm run build && \
-cd android && \
-./gradlew clean && \
-./gradlew assembleDebug
 ```
 
 ---
@@ -90,39 +93,38 @@ Only clear app data when explicitly testing first-run scenarios or resetting per
 
 ---
 
-## Critical Configuration: Package Name
+## Package Name Configuration
 
-### ⚠️ NEVER USE `.debug` SUFFIX
+### Debug vs Release Package Names
 
-**Rule**: The package name **MUST** be exactly `com.frostr.igloo` for NIP-55 to work.
+- **Debug builds**: `com.frostr.igloo.debug` (via `applicationIdSuffix ".debug"`)
+- **Release builds**: `com.frostr.igloo`
 
-**Why**: Amethyst and other NIP-55 clients look for the signer at `com.frostr.igloo`. A debug suffix breaks Content Resolver lookups and Intent resolution.
+Both work correctly because:
+- The manifest uses `${applicationId}` placeholders for content provider authorities
+- Internal intents use `packageName` variable (not hardcoded strings)
+- Debug and release can be installed side-by-side with separate storage/permissions
 
 **Verification**:
 ```bash
-adb shell dumpsys package com.frostr.igloo | grep "Package"
+adb shell pm list packages | grep igloo
 ```
-
-**Expected**: `Package [com.frostr.igloo]`
-**Wrong**: `Package [com.frostr.igloo.debug]`
 
 **Current Configuration** (in `app/build.gradle`):
 ```gradle
 android {
     namespace 'com.frostr.igloo'
     defaultConfig {
-        applicationId "com.frostr.igloo"  // ← NO SUFFIX
+        applicationId "com.frostr.igloo"
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix ""  // ← EXPLICITLY EMPTY
+            applicationIdSuffix ".debug"
         }
     }
 }
 ```
-
-See `/home/cscott/Repos/frostr/pwa/android/CRITICAL_PACKAGE_NAME.md` for full details.
 
 ---
 
@@ -313,38 +315,30 @@ See `/home/cscott/Repos/frostr/pwa/android/NIP55_BACKGROUND_SIGNING_ANALYSIS.md`
 ```bash
 # 1. Make code changes to PWA (src/) or Android (android/app/src/)
 
-# 2. Build PWA (if PWA changed)
-cd /home/cscott/Repos/frostr/pwa
-npm run build
+# 2. Build and install (ONE COMMAND - handles PWA build, asset copy, APK build, and install)
+npm run build -- --debug --install
 
-# 3. Build APK
-cd android
-./gradlew assembleDebug  # Use clean if PWA was updated
-
-# 4. Install to device (REQUIRED - do not skip this step)
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# 5. Clear logs and prepare for testing (REQUIRED)
+# 3. Clear logs and prepare for testing (REQUIRED)
 adb logcat -c
 
-# 6. Monitor logs (REQUIRED - start monitoring before user tests)
+# 4. Monitor logs (REQUIRED - start monitoring before user tests)
 adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "MainActivity:*" "AndroidRuntime:E" "*:F"
 ```
 
-**Rule**: After building the APK, ALWAYS proceed to install, clear logs, and start monitoring. Do not stop after the build step.
+**Rule**: After building the APK, ALWAYS proceed to clear logs and start monitoring. Do not stop after the build step.
 
 ### Quick Iteration (Kotlin-only changes)
 
-If you only changed Kotlin code (no PWA changes):
+If you only changed Kotlin code (no PWA changes), you still need to use the build script to ensure assets are current:
 
 ```bash
-cd /home/cscott/Repos/frostr/pwa/android
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+npm run build -- --debug --install
 adb logcat -c
 # Then start monitoring before user tests
 adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "MainActivity:*" "AndroidRuntime:E" "*:F"
 ```
+
+**Note**: Even for Kotlin-only changes, always use `npm run build:debug` rather than `./gradlew` directly to avoid stale asset issues.
 
 ### TypeScript Type Reorganization
 
@@ -422,35 +416,28 @@ Missing required parameters for nip44_decrypt
 ## File Locations
 
 ### Key Documentation
-- `/home/cscott/Repos/frostr/pwa/CLAUDE.md` - Project overview for Claude
-- `/home/cscott/Repos/frostr/pwa/docs/CONVENTIONS.md` - Coding standards
-- `/home/cscott/Repos/frostr/pwa/android/README.md` - Android architecture docs
-- `/home/cscott/Repos/frostr/pwa/src/README.md` - PWA source code docs
-
-### Critical Config Files
-- `/home/cscott/Repos/frostr/pwa/android/CRITICAL_PACKAGE_NAME.md`
-- `/home/cscott/Repos/frostr/pwa/android/CRITICAL_ALWAYS_CHECK_FRESH_LOGS.md`
-- `/home/cscott/Repos/frostr/pwa/android/NIP55_BACKGROUND_SIGNING_ANALYSIS.md`
+- `CLAUDE.md` - Project overview for Claude
+- `android/README.md` - Android architecture docs
+- `src/README.md` - PWA source code docs
 
 ### Build Scripts
-- `/home/cscott/Repos/frostr/pwa/script/build.ts` - PWA build configuration (esbuild)
-- `/home/cscott/Repos/frostr/pwa/android/app/build.gradle` - Android build config
+- `script/build.ts` - PWA build configuration (esbuild)
+- `android/app/build.gradle` - Android build config
 
 ### Source Directories
-- `/home/cscott/Repos/frostr/pwa/src/` - PWA TypeScript/React source
-- `/home/cscott/Repos/frostr/pwa/android/app/src/main/kotlin/com/frostr/igloo/` - Android Kotlin source
-- `/home/cscott/Repos/frostr/pwa/public/` - PWA static assets (HTML, manifest, icons)
+- `src/` - PWA TypeScript/React source
+- `android/app/src/main/kotlin/com/frostr/igloo/` - Android Kotlin source
+- `public/` - PWA static assets (HTML, manifest, icons)
 
 ---
 
 ## Common Gotchas
 
 1. **Gradle caching**: If PWA changes don't appear in APK, run `./gradlew clean`
-2. **Package name**: Never add `.debug` suffix - breaks NIP-55 resolution
-3. **Stale logs**: Always use `adb logcat -t` for fresh logs, not background bash output
-4. **Data persistence**: Use `adb install -r` to preserve user data during reinstall
-5. **Service Worker**: Clear browser cache if SW isn't updating: Settings → Apps → Igloo → Storage → Clear Cache
-6. **Type imports**: After reorganizing types, rebuild PWA to catch missing imports
+2. **Stale logs**: Always use `adb logcat -t` for fresh logs, not background bash output
+3. **Data persistence**: Use `adb install -r` to preserve user data during reinstall
+4. **Service Worker**: Clear browser cache if SW isn't updating: Settings → Apps → Igloo → Storage → Clear Cache
+5. **Type imports**: After reorganizing types, rebuild PWA to catch missing imports
 
 ---
 
