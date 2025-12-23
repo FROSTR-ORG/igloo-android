@@ -2,7 +2,6 @@ import { useEffect, useState }   from 'react'
 import { useBifrostNode }        from '@/context/node.js'
 
 import { create_signing_bridge, executeAutoSigning } from '@/lib/signer.js'
-import { SigningBatchQueue } from '@/lib/batch-signer.js'
 
 import type { ReactElement } from 'react'
 import type { NIP55Bridge }  from '@/types/bridge.js'
@@ -12,17 +11,20 @@ import type { NIP55Bridge }  from '@/types/bridge.js'
  *
  * Sets up the window.nostr.nip55 interface when the Bifrost node is ready.
  * Provides automatic permission support for Content Resolver background operations.
- * Synchronizes permissions to window context for ContentProvider access.
+ *
+ * Note: Android-side NIP55RequestQueue handles all deduplication, caching, and batching.
+ * No PWA-side queues needed.
  */
 export function NIP55Bridge(): ReactElement | null {
   const node = useBifrostNode()
   const [ _, set_bridge_ready ] = useState(false)
 
-  // No permission synchronization needed - components read directly from storage
-
   useEffect(() => {
-    // Initialize bridge when node is online OR locked (locked allows get_public_key)
-    if (node.status === 'online' || node.status === 'locked') {
+    console.log('[NIP55Bridge] Effect triggered, status:', node.status, 'client:', node.client ? 'EXISTS' : 'NULL')
+
+    // Initialize bridge when node is online, locked, or offline (connecting)
+    // Only disable for 'init' (not configured) or 'disabled' states
+    if (node.status === 'online' || node.status === 'locked' || node.status === 'offline') {
       try {
         // Create the enhanced signing bridge function
         const signing_bridge = create_signing_bridge()
@@ -30,9 +32,8 @@ export function NIP55Bridge(): ReactElement | null {
         // Create clean consolidated bridge interface
         const bridge: NIP55Bridge = {
           ready: true,
-          nodeClient: node.client || null,  // May be null when locked
-          autoSign: executeAutoSigning,
-          batchQueue: node.client ? new SigningBatchQueue(node.client) : null
+          nodeClient: node.client || null,  // May be null when locked, set when connecting/online
+          autoSign: executeAutoSigning
         }
 
         // Expose clean interface on window.nostr
@@ -42,6 +43,7 @@ export function NIP55Bridge(): ReactElement | null {
         window.nostr.nip55 = signing_bridge
         window.nostr.bridge = bridge
 
+        console.log('[NIP55Bridge] Bridge set up, nodeClient:', node.client ? 'EXISTS' : 'NULL')
         set_bridge_ready(true)
 
       } catch {
@@ -50,17 +52,16 @@ export function NIP55Bridge(): ReactElement | null {
         if (window.nostr?.bridge) {
           window.nostr.bridge.ready = false
           window.nostr.bridge.nodeClient = null
-          window.nostr.bridge.batchQueue = null
         }
       }
     } else {
-      // Clean up bridge if node goes completely offline
+      // Clean up bridge if node is not configured (init/disabled)
+      console.log('[NIP55Bridge] Cleaning up bridge, status:', node.status)
       if (window.nostr?.nip55) {
         delete window.nostr.nip55
         if (window.nostr.bridge) {
           window.nostr.bridge.ready = false
           window.nostr.bridge.nodeClient = null
-          window.nostr.bridge.batchQueue = null
         }
         set_bridge_ready(false)
       }

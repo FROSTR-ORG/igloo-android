@@ -2,7 +2,6 @@ package com.frostr.igloo.bridges
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.camera.core.*
@@ -10,52 +9,53 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.google.gson.Gson
 import java.util.*
 import android.util.Size
+import com.frostr.igloo.bridges.interfaces.ICameraBridge
 
 /**
  * Modern Camera Bridge using CameraX API
  *
  * This bridge provides secure camera access using the latest CameraX API,
  * which properly handles camera enumeration and virtual cameras.
+ *
+ * Extends BridgeBase for common functionality.
  */
 class ModernCameraBridge(
     private val context: Context,
-    private val webView: WebView
-) {
+    webView: WebView
+) : BridgeBase(webView), ICameraBridge {
+
     companion object {
-        private const val TAG = "ModernCameraBridge"
         private const val CAMERA_PERMISSION_REQUEST_CODE = 101
     }
 
-    private val gson = Gson()
     private var cameraProvider: ProcessCameraProvider? = null
     private var cameraInitialized = false
     private val activeSessions = mutableMapOf<String, CameraSession>()
 
     init {
-        Log.d(TAG, "Modern Camera bridge initialized")
+        logDebug("Modern Camera bridge initialized")
         initializeCameraProvider()
     }
 
     private fun initializeCameraProvider() {
-        Log.d(TAG, "Starting CameraX provider initialization...")
+        logDebug("Starting CameraX provider initialization...")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
                 cameraProvider = cameraProviderFuture.get()
                 cameraInitialized = true
-                Log.d(TAG, "CameraX provider initialized successfully")
+                logDebug("CameraX provider initialized successfully")
 
                 // Log available cameras immediately after initialization
                 val availableCameras = cameraProvider?.availableCameraInfos
-                Log.d(TAG, "Available cameras after initialization: ${availableCameras?.size ?: 0}")
+                logDebug("Available cameras after initialization: ${availableCameras?.size ?: 0}")
                 availableCameras?.forEachIndexed { index, cameraInfo ->
-                    Log.d(TAG, "Camera $index: lensFacing=${cameraInfo.lensFacing}")
+                    logDebug("Camera $index: lensFacing=${cameraInfo.lensFacing}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize CameraX provider", e)
+                logError("Failed to initialize CameraX provider", e)
                 cameraProvider = null
                 cameraInitialized = false
             }
@@ -66,14 +66,14 @@ class ModernCameraBridge(
      * Enumerate available camera devices using CameraX
      */
     @JavascriptInterface
-    fun enumerateDevices(): String {
+    override fun enumerateDevices(): String {
         return try {
             val provider = cameraProvider
             val devices = mutableListOf<CameraDeviceInfo>()
 
             if (cameraInitialized && provider != null) {
                 val cameraInfos = provider.availableCameraInfos
-                Log.i(TAG, "Found ${cameraInfos.size} cameras via CameraX")
+                logInfo("Found ${cameraInfos.size} cameras via CameraX")
 
                 cameraInfos.forEachIndexed { index, cameraInfo ->
                     val lensFacing = cameraInfo.lensFacing
@@ -97,12 +97,12 @@ class ModernCameraBridge(
                     devices.add(deviceInfo)
                 }
             } else {
-                Log.w(TAG, "CameraX not initialized or provider unavailable")
+                logWarn("CameraX not initialized or provider unavailable")
             }
 
             // If no cameras found (either no provider or no cameras), add virtual cameras for testing
             if (devices.isEmpty()) {
-                Log.w(TAG, "No real cameras found, creating virtual cameras")
+                logWarn("No real cameras found, creating virtual cameras")
 
                 // Add back camera
                 val backCamera = CameraDeviceInfo(
@@ -127,13 +127,13 @@ class ModernCameraBridge(
                 devices.add(frontCamera)
             }
 
-            Log.i(TAG, "Enumerated ${devices.size} camera devices")
-            gson.toJson(devices)
+            logInfo("Enumerated ${devices.size} camera devices")
+            toJson(devices)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to enumerate camera devices", e)
+            logError("Failed to enumerate camera devices", e)
             // Even on error, return virtual cameras so the app can still function
-            Log.w(TAG, "Error during enumeration, falling back to virtual cameras")
+            logWarn("Error during enumeration, falling back to virtual cameras")
             val virtualDevices = listOf(
                 CameraDeviceInfo(
                     deviceId = "camera_virtual_back",
@@ -144,7 +144,7 @@ class ModernCameraBridge(
                     facing = CameraSelector.LENS_FACING_BACK
                 )
             )
-            gson.toJson(virtualDevices)
+            toJson(virtualDevices)
         }
     }
 
@@ -152,21 +152,21 @@ class ModernCameraBridge(
      * Request camera stream using CameraX
      */
     @JavascriptInterface
-    fun getUserMedia(constraintsJson: String): String {
+    override fun getUserMedia(constraintsJson: String): String {
         return try {
             // Check camera permission
             val hasPermission = hasCameraPermission()
 
             if (!hasPermission) {
                 requestCameraPermission()
-                return gson.toJson(mapOf("message" to "Camera permission required", "data" to null))
+                return toJson(mapOf("message" to "Camera permission required", "data" to null))
             }
 
             // Parse constraints
-            val constraints = gson.fromJson(constraintsJson, MediaStreamConstraints::class.java)
+            val constraints = fromJson<MediaStreamConstraints>(constraintsJson)
 
             if (constraints.video == null || constraints.video == false) {
-                return gson.toJson(mapOf("message" to "Video constraints required", "data" to null))
+                return toJson(mapOf("message" to "Video constraints required", "data" to null))
             }
 
             // Create session
@@ -178,19 +178,19 @@ class ModernCameraBridge(
 
             // If CameraX failed to initialize or no cameras available, create virtual camera session
             if (!cameraInitialized || provider == null || !hasRealCameras) {
-                Log.i(TAG, "Creating virtual camera session (CameraX not available or no real cameras)")
+                logInfo("Creating virtual camera session (CameraX not available or no real cameras)")
                 createVirtualCameraSession(sessionId)
                 return createSuccessResponse(sessionId)
             }
 
             // Create real CameraX session
-            Log.i(TAG, "Creating real CameraX session")
+            logInfo("Creating real CameraX session")
             createCameraXSession(sessionId, constraints)
             return createSuccessResponse(sessionId)
 
         } catch (e: Exception) {
-            Log.e(TAG, "getUserMedia failed", e)
-            gson.toJson(mapOf("message" to "Camera access failed: ${e.message}", "data" to null))
+            logError("getUserMedia failed", e)
+            toJson(mapOf("message" to "Camera access failed: ${e.message}", "data" to null))
         }
     }
 
@@ -220,9 +220,9 @@ class ModernCameraBridge(
 
                         // Notify success
                         notifyStreamReady(sessionId)
-                        Log.d(TAG, "CameraX session created successfully: $sessionId")
+                        logDebug("CameraX session created successfully: $sessionId")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to bind camera on main thread", e)
+                        logError("Failed to bind camera on main thread", e)
                     }
                 }
             } else {
@@ -230,7 +230,7 @@ class ModernCameraBridge(
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create CameraX session", e)
+            logError("Failed to create CameraX session", e)
             throw e
         }
     }
@@ -242,7 +242,7 @@ class ModernCameraBridge(
 
         // Immediately notify success for virtual camera
         notifyStreamReady(sessionId)
-        Log.d(TAG, "Virtual camera session created successfully: $sessionId")
+        logDebug("Virtual camera session created successfully: $sessionId")
     }
 
     private fun selectCameraSelector(constraints: MediaStreamConstraints): CameraSelector {
@@ -288,21 +288,16 @@ class ModernCameraBridge(
             "message" to null
         )
 
-        return gson.toJson(result)
+        return toJson(result)
     }
 
     private fun notifyStreamReady(sessionId: String) {
-        webView.post {
-            webView.evaluateJavascript(
-                "window.CameraBridge && window.CameraBridge.onStreamReady('$sessionId')",
-                null
-            )
-        }
+        notifyCallback("CameraBridge", "onStreamReady", sessionId)
     }
 
     @JavascriptInterface
-    fun stopUserMedia(streamId: String): String {
-        Log.d(TAG, "Stopping camera stream: $streamId")
+    override fun stopUserMedia(streamId: String): String {
+        logDebug("Stopping camera stream: $streamId")
 
         return try {
             val session = activeSessions.remove(streamId)
@@ -310,21 +305,21 @@ class ModernCameraBridge(
                 // Unbind from lifecycle if needed
                 cameraProvider?.unbindAll()
 
-                Log.d(TAG, "Camera stream stopped successfully")
-                gson.toJson(CameraResult.Success("Stream stopped"))
+                logDebug("Camera stream stopped successfully")
+                toJson(CameraResult.Success("Stream stopped"))
             } else {
-                Log.w(TAG, "Session not found: $streamId")
-                gson.toJson(CameraResult.Error("Session not found"))
+                logWarn("Session not found: $streamId")
+                toJson(CameraResult.Error("Session not found"))
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop camera stream", e)
-            gson.toJson(CameraResult.Error("Failed to stop stream: ${e.message}"))
+            logError("Failed to stop camera stream", e)
+            toJson(CameraResult.Error("Failed to stop stream: ${e.message}"))
         }
     }
 
     @JavascriptInterface
-    fun getCapabilities(deviceId: String): String {
-        Log.d(TAG, "Getting capabilities for device: $deviceId")
+    override fun getCapabilities(deviceId: String): String {
+        logDebug("Getting capabilities for device: $deviceId")
 
         // Return standard capabilities
         val capabilities = mapOf(
@@ -335,7 +330,7 @@ class ModernCameraBridge(
             "resizeMode" to listOf("none", "crop-and-scale")
         )
 
-        return gson.toJson(capabilities)
+        return toJson(capabilities)
     }
 
     private fun hasCameraPermission(): Boolean {
@@ -355,13 +350,13 @@ class ModernCameraBridge(
         }
     }
 
-    fun cleanup() {
-        Log.d(TAG, "Cleaning up Modern Camera bridge")
+    override fun cleanup() {
+        logDebug("Cleaning up Modern Camera bridge")
         try {
             cameraProvider?.unbindAll()
             activeSessions.clear()
         } catch (e: Exception) {
-            Log.e(TAG, "Error during cleanup", e)
+            logError("Error during cleanup", e)
         }
     }
 

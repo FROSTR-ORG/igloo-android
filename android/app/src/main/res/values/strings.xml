@@ -7,4 +7,22 @@
     <!-- NIP-55 Permission Strings -->
     <string name="permission_nip55_label">NIP-55 Signing Access</string>
     <string name="permission_nip55_description">Allows applications to request cryptographic signing operations through the NIP-55 protocol</string>
+
+    <!-- Service Notifications -->
+    <string name="service_title_ready">Igloo ready</string>
+    <string name="service_text_background">Background signing enabled</string>
+    <string name="service_title_signing">Signing Nostr event</string>
+    <string name="service_text_wait">Please wait…</string>
+
+    <!-- Permission Dialog -->
+    <string name="permission_dialog_title">Permission Request</string>
+    <string name="permission_dialog_title_bulk">Grant Permissions</string>
+    <string name="permission_button_allow">Allow</string>
+    <string name="permission_button_deny">Deny</string>
+    <string name="permission_app_label">Application: %s</string>
+    <string name="permission_remember_choice">Remember my choice</string>
+    <string name="permission_all_granted">All requested permissions are already granted for this app.</string>
+    <string name="permission_select_prompt">Select permissions to grant:</string>
+    <string name="permission_error_parsing">Error parsing permissions</string>
+    <string name="permission_header_settings">Settings</string>
 </resources>

@@ -18,11 +18,12 @@ export interface CacheData {
 }
 
 export interface SettingsData {
-  group       : GroupPackage | null
-  share       : string       | null
-  peers       : PeerConfig[]
-  pubkey      : string       | null
-  relays      : RelayPolicy[]
+  group              : GroupPackage | null
+  share              : string       | null
+  peers              : PeerConfig[]
+  pubkey             : string       | null
+  relays             : RelayPolicy[]
+  keepAliveInBackground : boolean   // Keep app alive for instant background signing
 }
 
 export interface CacheAPI<T> {

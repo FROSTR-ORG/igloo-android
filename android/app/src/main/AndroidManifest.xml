@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
 
     <application
@@ -51,14 +53,23 @@
             android:exported="false"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
+        <!-- Debug Metrics Activity (debug builds only) -->
+        <activity
+            android:name=".debug.MetricsActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.AppCompat.Light.DarkActionBar" />
+
         <!-- Invisible NIP-55 Handler - thin routing layer -->
+        <!-- singleTask ensures only ONE instance exists - prevents gridlock from concurrent handlers -->
         <activity
             android:name=".InvisibleNIP55Handler"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:excludeFromRecents="true"
-            android:stateNotNeeded="true">
+            android:stateNotNeeded="true"
+            android:taskAffinity="">
 
             <!-- Handle nostrsigner: URLs -->
             <intent-filter android:priority="1000">
@@ -70,15 +81,15 @@
 
         </activity>
 
-        <!-- NIP-55 Signing Service - keeps process alive during signing -->
+        <!-- NIP-55 Handler Service - transient protection for InvisibleNIP55Handler -->
         <service
-            android:name=".NIP55SigningService"
+            android:name=".services.NIP55HandlerService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Nostr event signing" />
+                android:value="Transient protection for NIP-55 signing request handler" />
         </service>
 
         <!-- NIP-55 ContentProvider for background signing (Amethyst compatibility) -->

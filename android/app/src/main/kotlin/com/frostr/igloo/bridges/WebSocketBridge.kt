@@ -2,11 +2,10 @@ package com.frostr.igloo.bridges
 
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
-import android.util.Log
-import com.google.gson.Gson
 import okhttp3.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import com.frostr.igloo.bridges.interfaces.IWebSocketBridge
 import java.util.UUID
 
 /**
@@ -15,16 +14,16 @@ import java.util.UUID
  * This bridge provides a secure WebSocket implementation using OkHttp
  * while maintaining 100% API compatibility with the native WebSocket API.
  * The PWA remains completely unaware of this implementation.
+ *
+ * Extends BridgeBase for common functionality.
  */
-class WebSocketBridge(private val webView: WebView) {
+class WebSocketBridge(webView: WebView) : BridgeBase(webView), IWebSocketBridge {
 
     companion object {
-        private const val TAG = "WebSocketBridge"
         private const val CONNECTION_TIMEOUT = 10L // seconds
         private const val PING_INTERVAL = 30L // seconds
     }
 
-    private val gson = Gson()
     private val connections = ConcurrentHashMap<String, WebSocketConnection>()
 
     // OkHttp client optimized for WebSocket connections
@@ -42,7 +41,7 @@ class WebSocketBridge(private val webView: WebView) {
      * @return Connection ID string (UUID)
      */
     @JavascriptInterface
-    fun createWebSocket(url: String, protocols: String = ""): String {
+    override fun createWebSocket(url: String, protocols: String): String {
         try {
             val connectionId = UUID.randomUUID().toString()
             val protocolList = if (protocols.isNotEmpty()) {
@@ -73,12 +72,12 @@ class WebSocketBridge(private val webView: WebView) {
 
             connections[connectionId] = connection
 
-            Log.i(TAG, "WebSocket connection created: $url (ID: $connectionId)")
+            logInfo("WebSocket connection created: $url (ID: $connectionId)")
             // Return raw connectionId string for polyfill
             return connectionId
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create WebSocket connection", e)
+            logError("Failed to create WebSocket connection", e)
             throw RuntimeException("Failed to create WebSocket: ${e.message}", e)
         }
     }
@@ -88,10 +87,10 @@ class WebSocketBridge(private val webView: WebView) {
      * Polyfill-compatible alias
      */
     @JavascriptInterface
-    fun send(connectionId: String, message: String) {
+    override fun send(connectionId: String, message: String) {
         val connection = connections[connectionId]
         if (connection == null) {
-            Log.w(TAG, "Cannot send - connection not found: $connectionId")
+            logWarn("Cannot send - connection not found: $connectionId")
             return
         }
 
@@ -99,19 +98,19 @@ class WebSocketBridge(private val webView: WebView) {
             when (connection.state) {
                 WebSocketState.OPEN -> {
                     connection.webSocket.send(message)
-                    Log.d(TAG, "Message sent on connection: $connectionId")
+                    logDebug("Message sent on connection: $connectionId")
                 }
                 WebSocketState.CONNECTING -> {
                     // Queue message for when connection opens
                     connection.queuedMessages.add(message)
-                    Log.d(TAG, "Message queued for connection: $connectionId")
+                    logDebug("Message queued for connection: $connectionId")
                 }
                 else -> {
-                    Log.w(TAG, "Cannot send - connection not open: $connectionId (state: ${connection.state})")
+                    logWarn("Cannot send - connection not open: $connectionId (state: ${connection.state})")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending message on connection: $connectionId", e)
+            logError("Error sending message on connection: $connectionId", e)
         }
     }
 
@@ -120,21 +119,21 @@ class WebSocketBridge(private val webView: WebView) {
      * Polyfill-compatible alias
      */
     @JavascriptInterface
-    fun close(connectionId: String, code: Int = 1000, reason: String = "") {
-        Log.d(TAG, "Closing WebSocket connection: $connectionId (code: $code, reason: $reason)")
+    override fun close(connectionId: String, code: Int, reason: String) {
+        logDebug("Closing WebSocket connection: $connectionId (code: $code, reason: $reason)")
 
         val connection = connections[connectionId]
         if (connection == null) {
-            Log.w(TAG, "Cannot close - connection not found: $connectionId")
+            logWarn("Cannot close - connection not found: $connectionId")
             return
         }
 
         try {
             connection.state = WebSocketState.CLOSING
             connection.webSocket.close(code, reason)
-            Log.d(TAG, "WebSocket close initiated for connection: $connectionId")
+            logDebug("WebSocket close initiated for connection: $connectionId")
         } catch (e: Exception) {
-            Log.e(TAG, "Error closing WebSocket connection: $connectionId", e)
+            logError("Error closing WebSocket connection: $connectionId", e)
         }
     }
 
@@ -144,7 +143,7 @@ class WebSocketBridge(private val webView: WebView) {
      * @return Connection state information
      */
     @JavascriptInterface
-    fun getConnectionState(connectionId: String): String {
+    override fun getConnectionState(connectionId: String): String {
         val connection = connections[connectionId]
         return if (connection != null) {
             gson.toJson(WebSocketStateInfo(
@@ -162,28 +161,15 @@ class WebSocketBridge(private val webView: WebView) {
      * Notify JavaScript of WebSocket events via polyfill callback
      */
     private fun notifyJavaScript(event: String, connectionId: String, data: String? = null) {
-        val eventData = gson.toJson(WebSocketEvent(
+        val eventData = toJson(WebSocketEvent(
             type = event,
             connectionId = connectionId,
             data = data,
             timestamp = System.currentTimeMillis()
         ))
 
-        // Properly escape JSON for JavaScript injection
-        val escapedEventData = eventData
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-
-        // Call polyfill event handler on UI thread
-        webView.post {
-            webView.evaluateJavascript(
-                "window.__handleWebSocketEvent && window.__handleWebSocketEvent('$escapedEventData')",
-                null
-            )
-        }
+        // Use BridgeBase event notification (handles escaping and thread safety)
+        notifyEvent("__handleWebSocketEvent", eventData)
     }
 
     /**
@@ -195,7 +181,7 @@ class WebSocketBridge(private val webView: WebView) {
     ) : WebSocketListener() {
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            Log.d(TAG, "WebSocket opened: $connectionId")
+            logDebug("WebSocket opened: $connectionId")
 
             val connection = connections[connectionId]
             if (connection != null) {
@@ -215,12 +201,12 @@ class WebSocketBridge(private val webView: WebView) {
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            Log.d(TAG, "WebSocket message received: $connectionId")
+            logDebug("WebSocket message received: $connectionId")
             notifyJavaScript("message", connectionId, text)
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-            Log.d(TAG, "WebSocket closing: $connectionId (code: $code, reason: $reason)")
+            logDebug("WebSocket closing: $connectionId (code: $code, reason: $reason)")
 
             val connection = connections[connectionId]
             if (connection != null) {
@@ -229,13 +215,13 @@ class WebSocketBridge(private val webView: WebView) {
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            Log.d(TAG, "WebSocket closed: $connectionId (code: $code, reason: $reason)")
+            logDebug("WebSocket closed: $connectionId (code: $code, reason: $reason)")
 
             connections[connectionId]?.let { connection ->
                 connection.state = WebSocketState.CLOSED
             }
 
-            val closeData = gson.toJson(WebSocketCloseEvent(
+            val closeData = toJson(WebSocketCloseEvent(
                 code = code,
                 reason = reason,
                 wasClean = code == 1000
@@ -248,13 +234,13 @@ class WebSocketBridge(private val webView: WebView) {
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.e(TAG, "WebSocket failure: $connectionId", t)
+            logError("WebSocket failure: $connectionId", t)
 
             connections[connectionId]?.let { connection ->
                 connection.state = WebSocketState.CLOSED
             }
 
-            val errorData = gson.toJson(WebSocketErrorEvent(
+            val errorData = toJson(WebSocketErrorEvent(
                 message = t.message ?: "Unknown error",
                 code = response?.code ?: 0
             ))
@@ -269,14 +255,14 @@ class WebSocketBridge(private val webView: WebView) {
     /**
      * Clean up all connections (call on activity destroy)
      */
-    fun cleanup() {
-        Log.d(TAG, "Cleaning up WebSocket connections")
+    override fun cleanup() {
+        logDebug("Cleaning up WebSocket connections")
 
         connections.values.forEach { connection ->
             try {
                 connection.webSocket.close(1001, "Application closing")
             } catch (e: Exception) {
-                Log.w(TAG, "Error closing connection during cleanup", e)
+                logWarn("Error closing connection during cleanup")
             }
         }
 

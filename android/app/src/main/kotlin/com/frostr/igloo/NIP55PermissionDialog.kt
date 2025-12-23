@@ -15,6 +15,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import com.frostr.igloo.bridges.StorageBridge
+import com.frostr.igloo.constants.NostrEventKinds
+import com.frostr.igloo.debug.NIP55Metrics
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -96,6 +98,9 @@ class NIP55PermissionDialog : DialogFragment() {
         val appId = arguments?.getString(ARG_APP_ID) ?: "unknown"
         val isBulk = arguments?.getBoolean(ARG_IS_BULK) ?: false
 
+        // Record metrics for permission prompt
+        NIP55Metrics.recordPermissionPrompt()
+
         val builder = AlertDialog.Builder(requireContext())
         val inflater = requireActivity().layoutInflater
         val view = inflater.inflate(android.R.layout.select_dialog_item, null)
@@ -104,11 +109,11 @@ class NIP55PermissionDialog : DialogFragment() {
         val dialogView = createDialogView(appId, isBulk)
 
         builder.setView(dialogView)
-            .setTitle(if (isBulk) "Grant Permissions" else "Permission Request")
-            .setPositiveButton("Allow") { _, _ ->
+            .setTitle(if (isBulk) getString(R.string.permission_dialog_title_bulk) else getString(R.string.permission_dialog_title))
+            .setPositiveButton(getString(R.string.permission_button_allow)) { _, _ ->
                 handleApprove(appId, isBulk)
             }
-            .setNegativeButton("Deny") { _, _ ->
+            .setNegativeButton(getString(R.string.permission_button_deny)) { _, _ ->
                 handleDeny(appId, isBulk)
             }
 
@@ -140,7 +145,7 @@ class NIP55PermissionDialog : DialogFragment() {
 
         // App name
         layout.addView(TextView(context).apply {
-            text = "Application: $appId"
+            text = getString(R.string.permission_app_label, appId)
             textSize = 14f
             setPadding(0, 0, 0, 16)
         })
@@ -166,7 +171,7 @@ class NIP55PermissionDialog : DialogFragment() {
 
         // Remember choice section with distinct styling
         layout.addView(TextView(context).apply {
-            text = "Settings"
+            text = getString(R.string.permission_header_settings)
             textSize = 12f
             setTextColor(android.graphics.Color.parseColor("#757575"))  // Gray label
             setPadding(0, 0, 0, 8)
@@ -175,7 +180,7 @@ class NIP55PermissionDialog : DialogFragment() {
         // Remember choice checkbox (checked by default for bulk dialogs only)
         rememberChoice = isBulk  // Initialize based on dialog type
         layout.addView(CheckBox(context).apply {
-            text = "Remember my choice"
+            text = getString(R.string.permission_remember_choice)
             isChecked = isBulk  // Checked for bulk dialogs, unchecked for single permission dialogs
             setOnCheckedChangeListener { _, isChecked ->
                 rememberChoice = isChecked
@@ -248,7 +253,7 @@ class NIP55PermissionDialog : DialogFragment() {
 
             if (newPermissions.isEmpty()) {
                 layout.addView(TextView(context).apply {
-                    text = "All requested permissions are already granted for this app."
+                    text = getString(R.string.permission_all_granted)
                     textSize = 14f
                     setPadding(0, 0, 0, 16)
                 })
@@ -256,7 +261,7 @@ class NIP55PermissionDialog : DialogFragment() {
             }
 
             layout.addView(TextView(context).apply {
-                text = "Select permissions to grant:"
+                text = getString(R.string.permission_select_prompt)
                 textSize = 14f
                 setPadding(0, 0, 0, 16)
             })
@@ -312,7 +317,7 @@ class NIP55PermissionDialog : DialogFragment() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse permissions JSON", e)
             layout.addView(TextView(context).apply {
-                text = "Error parsing permissions"
+                text = getString(R.string.permission_error_parsing)
                 textSize = 14f
             })
         }
@@ -393,6 +398,9 @@ class NIP55PermissionDialog : DialogFragment() {
     private fun handleApprove(appId: String, isBulk: Boolean) {
         Log.d(TAG, "User approved permissions for $appId (remember: $rememberChoice)")
 
+        // Record metrics for permission decision
+        NIP55Metrics.recordPermissionDecision(approved = true)
+
         if (rememberChoice) {
             // Save permissions permanently to localStorage
             savePermissions(appId, isBulk, allowed = true)
@@ -404,6 +412,9 @@ class NIP55PermissionDialog : DialogFragment() {
 
     private fun handleDeny(appId: String, isBulk: Boolean) {
         Log.d(TAG, "User denied permissions for $appId (remember: $rememberChoice)")
+
+        // Record metrics for permission decision
+        NIP55Metrics.recordPermissionDecision(approved = false)
 
         if (rememberChoice) {
             savePermissions(appId, isBulk, allowed = false)
@@ -493,23 +504,7 @@ class NIP55PermissionDialog : DialogFragment() {
     }
 
     private fun getEventKindLabel(kind: Int): String {
-        return when (kind) {
-            0 -> "Metadata"
-            1 -> "Text Note"
-            3 -> "Contacts"
-            4 -> "Direct Message"
-            5 -> "Event Deletion"
-            6 -> "Repost"
-            7 -> "Reaction"
-            22242 -> "Relay Auth"
-            23194 -> "Wallet Info"
-            23195 -> "Wallet Request"
-            24133 -> "Nostr Connect"
-            27235 -> "NWC Request"
-            30023 -> "Long-form Content"
-            30078 -> "App Data"
-            else -> "Kind $kind"
-        }
+        return NostrEventKinds.getDisplayName(kind)
     }
 
     // Data classes (matching PWA format)

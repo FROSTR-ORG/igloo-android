@@ -17,6 +17,13 @@ package com.frostr.igloo.debug
 object DebugConfig {
 
     /**
+     * Check if this is a debug build
+     * Uses DEBUG_ENABLED constant which is set to true for debug builds
+     * ProGuard will optimize this out in release builds
+     */
+    fun isDebugBuild(): Boolean = DEBUG_ENABLED
+
+    /**
      * Master debug flag - controls all debug features
      * Set to true for debug builds, false for release builds (ProGuard will optimize out)
      */

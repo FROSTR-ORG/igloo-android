@@ -50,11 +50,16 @@ export function NodeInfoView () {
   }
 
   useEffect(() => {
+    console.log('[NodeInfoView] Auto-unlock effect triggered, status:', node.status)
     if (node.status === 'locked') {
       // First check sessionStorage
       const password = sessionStorage.getItem(STORAGE_KEYS.SESSION_PASSWORD)
+      console.log('[NodeInfoView] Checking sessionStorage for password:', password ? 'FOUND' : 'NOT_FOUND')
       // If the password is found, unlock the node.
-      if (password) node.unlock(password)
+      if (password) {
+        console.log('[NodeInfoView] Attempting auto-unlock...')
+        node.unlock(password)
+      }
     }
   }, [ node.status ])
 

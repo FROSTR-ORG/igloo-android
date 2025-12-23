@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2]
+
+- Updated copy on welcome message.
+- New architecture. Fixed a lot of issues with signing.
+
 ## [0.1.1]
 
 - Added a number of improvements to request de-duplication, rate-limiting, message-queuing, and connection failure detection / recovery.

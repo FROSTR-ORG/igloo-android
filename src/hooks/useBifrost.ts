@@ -215,6 +215,36 @@ export function useBifrost () : BifrostNodeAPI {
     reset()
   }, [ settings.data.peers, settings.data.relays ])
 
+  // Notify Android of node state changes for foreground service control
+  // The foreground service is always enabled for reliable background signing
+  useEffect(() => {
+    // Only run in Android WebView
+    if (typeof window === 'undefined' || !(window as any).NodeStateBridge) {
+      return
+    }
+
+    const bridge = (window as any).NodeStateBridge
+
+    if (status === 'online') {
+      // Node is online - start persistent foreground service
+      try {
+        bridge.onNodeOnline()
+        console.log('[useBifrost] Notified Android: node online - starting foreground service')
+      } catch (e) {
+        console.warn('[useBifrost] Failed to notify Android of node online:', e)
+      }
+    } else if (status === 'locked' || status === 'disabled' || status === 'init') {
+      // Node is locked or not configured - stop foreground service
+      try {
+        bridge.onNodeOffline()
+        console.log('[useBifrost] Notified Android: node offline - stopping foreground service')
+      } catch (e) {
+        console.warn('[useBifrost] Failed to notify Android of node offline:', e)
+      }
+    }
+    // Note: 'offline' status (disconnected but unlocked) keeps service running for reconnection
+  }, [ status ])
+
   // Auto-reconnect when connection drops
   useEffect(() => {
     // Only attempt reconnection if:

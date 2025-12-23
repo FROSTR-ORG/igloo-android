@@ -9,7 +9,7 @@
     "Background signing for approved requests.",
     "QR code scanning for easy setup."
   ],
-  "gettingStarted": "You will need Igloo Desktop or Igloo Server in order to generate a set of keys. You can then import one of the keys into Igloo Mobile. For a full setup guide, please visit our website.",
+  "gettingStarted": "You will need Igloo Desktop or Igloo CLI in order to generate a set of keys. You can then import one of the keys into Igloo Mobile. For a full setup guide, please visit our website.",
   "websiteUrl": "https://frostr.org",
   "websiteButtonText": "Visit FROSTR Website",
   "dismissButtonText": "Get Started",

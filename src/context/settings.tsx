@@ -18,11 +18,12 @@ import type {
 }  from '@/types/index.js'
 
 export const DEFAULT_STORE : SettingsData = {
-  group       : null,
-  share       : null,
-  peers       : [],
-  pubkey      : null,
-  relays      : [ ...defaults.relays ]
+  group                 : null,
+  share                 : null,
+  peers                 : [],
+  pubkey                : null,
+  relays                : [ ...defaults.relays ],
+  keepAliveInBackground : true  // Always enabled for reliable background signing
 }
 
 const STORE_KEY  = STORAGE_KEYS.SETTINGS

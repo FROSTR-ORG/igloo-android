@@ -2,7 +2,6 @@ package com.frostr.igloo.bridges
 
 import android.app.Activity
 import android.content.Intent
-import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.frostr.igloo.QRScannerActivity
@@ -12,20 +11,22 @@ import com.frostr.igloo.QRScannerActivity
  *
  * Launches a full-screen camera activity to scan QR codes.
  * Uses bundled ML Kit - no dynamic downloads required.
+ *
+ * Extends BridgeBase for common functionality.
  */
 class QRScannerBridge(
     private val activity: Activity,
-    private val webView: WebView
-) {
+    webView: WebView
+) : BridgeBase(webView) {
+
     companion object {
-        private const val TAG = "QRScannerBridge"
         const val QR_SCAN_REQUEST_CODE = 1001
     }
 
     private var pendingCallback: String? = null
 
     init {
-        Log.d(TAG, "QR Scanner bridge initialized")
+        logDebug("QR Scanner bridge initialized")
     }
 
     /**
@@ -34,7 +35,7 @@ class QRScannerBridge(
      */
     @JavascriptInterface
     fun scanQRCode(callbackId: String) {
-        Log.d(TAG, "QR scan requested with callback: $callbackId")
+        logDebug("QR scan requested with callback: $callbackId")
 
         // Store callback for when scan completes
         pendingCallback = callbackId
@@ -43,7 +44,7 @@ class QRScannerBridge(
         activity.runOnUiThread {
             val intent = Intent(activity, QRScannerActivity::class.java)
             activity.startActivityForResult(intent, QR_SCAN_REQUEST_CODE)
-            Log.d(TAG, "QR scanner activity launched")
+            logDebug("QR scanner activity launched")
         }
     }
 
@@ -60,14 +61,14 @@ class QRScannerBridge(
                 if (resultCode == Activity.RESULT_OK && data != null) {
                     val qrData = data.getStringExtra(QRScannerActivity.EXTRA_RESULT)
                     if (qrData != null) {
-                        Log.d(TAG, "QR scan successful: ${qrData.take(50)}...")
+                        logDebug("QR scan successful: ${qrData.take(50)}...")
                         notifySuccess(callbackId, qrData)
                     } else {
-                        Log.w(TAG, "QR scan result was null")
+                        logWarn("QR scan result was null")
                         notifyError(callbackId, "No QR data received")
                     }
                 } else {
-                    Log.d(TAG, "QR scan cancelled or failed")
+                    logDebug("QR scan cancelled or failed")
                     notifyError(callbackId, "Scan cancelled")
                 }
             }
@@ -75,44 +76,27 @@ class QRScannerBridge(
     }
 
     private fun notifySuccess(callbackId: String, data: String) {
-        webView.post {
-            // Escape the data for safe JavaScript injection
-            val escapedData = data
-                .replace("\\", "\\\\")
-                .replace("'", "\\'")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-
-            val script = """
-                if (window.QRScannerCallbacks && window.QRScannerCallbacks['$callbackId']) {
-                    window.QRScannerCallbacks['$callbackId'].resolve('$escapedData');
-                    delete window.QRScannerCallbacks['$callbackId'];
-                }
-            """.trimIndent()
-
-            webView.evaluateJavascript(script, null)
-        }
+        executeCallback(
+            callbacksObject = "QRScannerCallbacks",
+            callbackId = callbackId,
+            method = "resolve",
+            data = data,
+            cleanup = true
+        )
     }
 
     private fun notifyError(callbackId: String, error: String) {
-        webView.post {
-            val escapedError = error
-                .replace("\\", "\\\\")
-                .replace("'", "\\'")
-
-            val script = """
-                if (window.QRScannerCallbacks && window.QRScannerCallbacks['$callbackId']) {
-                    window.QRScannerCallbacks['$callbackId'].reject('$escapedError');
-                    delete window.QRScannerCallbacks['$callbackId'];
-                }
-            """.trimIndent()
-
-            webView.evaluateJavascript(script, null)
-        }
+        executeCallback(
+            callbacksObject = "QRScannerCallbacks",
+            callbackId = callbackId,
+            method = "reject",
+            data = error,
+            cleanup = true
+        )
     }
 
-    fun cleanup() {
-        Log.d(TAG, "Cleaning up QR Scanner bridge")
+    override fun cleanup() {
+        logDebug("Cleaning up QR Scanner bridge")
         pendingCallback = null
     }
 }

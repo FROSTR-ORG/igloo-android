@@ -14,23 +14,48 @@ import type {
  * Execute signing operation directly with the BifrostSignDevice
  */
 export async function executeSigningOperation(signer: BifrostSignDevice, request: NIP55Request): Promise<any> {
-  switch (request.type) {
-    case 'get_public_key':
-      return signer.get_pubkey()
-    case 'sign_event':
-      return await signer.sign_event(request.event)
-    case 'nip04_encrypt':
-      return await signer.nip04_encrypt(request.pubkey, request.plaintext)
-    case 'nip04_decrypt':
-      return await signer.nip04_decrypt(request.pubkey, request.ciphertext)
-    case 'nip44_encrypt':
-      return await signer.nip44_encrypt(request.pubkey, request.plaintext)
-    case 'nip44_decrypt':
-      return await signer.nip44_decrypt(request.pubkey, request.ciphertext)
-    case 'decrypt_zap_event':
-      throw new Error('decrypt_zap_event not implemented')
-    default:
-      throw new Error(`Unknown request type: ${(request as any).type}`)
+  console.log('[signer] executeSigningOperation START:', request.type, 'id:', request.id)
+  const startTime = Date.now()
+
+  try {
+    let result: any
+    switch (request.type) {
+      case 'get_public_key':
+        result = signer.get_pubkey()
+        break
+      case 'sign_event':
+        console.log('[signer] Calling signer.sign_event...')
+        result = await signer.sign_event(request.event)
+        break
+      case 'nip04_encrypt':
+        console.log('[signer] Calling signer.nip04_encrypt...')
+        result = await signer.nip04_encrypt(request.pubkey, request.plaintext)
+        break
+      case 'nip04_decrypt':
+        console.log('[signer] Calling signer.nip04_decrypt...')
+        result = await signer.nip04_decrypt(request.pubkey, request.ciphertext)
+        break
+      case 'nip44_encrypt':
+        console.log('[signer] Calling signer.nip44_encrypt...')
+        result = await signer.nip44_encrypt(request.pubkey, request.plaintext)
+        break
+      case 'nip44_decrypt':
+        console.log('[signer] Calling signer.nip44_decrypt...')
+        result = await signer.nip44_decrypt(request.pubkey, request.ciphertext)
+        break
+      case 'decrypt_zap_event':
+        throw new Error('decrypt_zap_event not implemented')
+      default:
+        throw new Error(`Unknown request type: ${(request as any).type}`)
+    }
+
+    const duration = Date.now() - startTime
+    console.log('[signer] executeSigningOperation COMPLETE:', request.type, 'duration:', duration, 'ms')
+    return result
+  } catch (error) {
+    const duration = Date.now() - startTime
+    console.error('[signer] executeSigningOperation ERROR:', request.type, 'duration:', duration, 'ms', 'error:', error)
+    throw error
   }
 }
 
@@ -40,29 +65,39 @@ export async function executeSigningOperation(signer: BifrostSignDevice, request
  */
 /**
  * Wait for node client to become available (for auto-unlock scenarios)
+ * Increased timeout to 10 seconds to allow for bifrost relay connection
  */
-async function waitForNodeClient(maxWaitMs: number = 3000): Promise<BifrostNode | null> {
+async function waitForNodeClient(maxWaitMs: number = 10000): Promise<BifrostNode | null> {
   const startTime = Date.now()
+  console.log('[signer] waitForNodeClient: starting wait, max:', maxWaitMs, 'ms')
 
   while (Date.now() - startTime < maxWaitMs) {
-    if (window.nostr?.bridge?.nodeClient) {
-      return window.nostr.bridge.nodeClient
+    const client = window.nostr?.bridge?.nodeClient
+    if (client) {
+      console.log('[signer] waitForNodeClient: client found after', Date.now() - startTime, 'ms')
+      return client
     }
     // Wait 100ms before checking again
     await new Promise(resolve => setTimeout(resolve, 100))
   }
 
+  console.log('[signer] waitForNodeClient: timeout after', maxWaitMs, 'ms')
   return null
 }
 
 export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Result> {
+  console.log('[signer] executeAutoSigning START:', request.type, 'id:', request.id)
+  const startTime = Date.now()
+
   try {
     // Check bridge availability
     if (!window.nostr?.bridge?.ready) {
+      console.error('[signer] Bridge not ready')
       throw new Error('NIP-55 bridge not ready')
     }
 
     let nodeClient = window.nostr.bridge.nodeClient
+    console.log('[signer] nodeClient available:', !!nodeClient)
 
     // For get_public_key, we can read from settings even when locked
     if (!nodeClient && request.type === 'get_public_key') {
@@ -93,9 +128,11 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     if (!nodeClient && request.type !== 'get_public_key') {
       // Check if there's a session password (indicates auto-unlock will happen)
       const sessionPassword = sessionStorage.getItem(STORAGE_KEYS.SESSION_PASSWORD)
+      console.log('[signer] executeAutoSigning: nodeClient null, sessionPassword:', sessionPassword ? 'FOUND' : 'NOT_FOUND')
 
       if (sessionPassword) {
-        nodeClient = await waitForNodeClient(3000)
+        // Wait up to 10 seconds for auto-unlock to complete (bifrost relay connection takes time)
+        nodeClient = await waitForNodeClient(10000)
 
         if (!nodeClient) {
           throw new Error('Auto-unlock timed out - node still locked')
@@ -117,6 +154,8 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     // For get_public_key, add npub field for Coracle compatibility
     if (request.type === 'get_public_key') {
       const npub = nip19.npubEncode(result)
+      const duration = Date.now() - startTime
+      console.log('[signer] executeAutoSigning SUCCESS (get_public_key), duration:', duration, 'ms')
       return {
         ok: true,
         type: request.type,
@@ -126,6 +165,8 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
       } as any
     }
 
+    const duration = Date.now() - startTime
+    console.log('[signer] executeAutoSigning SUCCESS:', request.type, 'duration:', duration, 'ms')
     return {
       ok: true,
       type: request.type,
@@ -134,6 +175,8 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
     }
 
   } catch (error) {
+    const duration = Date.now() - startTime
+    console.error('[signer] executeAutoSigning ERROR:', request.type, 'duration:', duration, 'ms', 'error:', error)
     return {
       ok: false,
       type: request.type,
@@ -156,6 +199,9 @@ export async function executeAutoSigning(request: NIP55Request): Promise<NIP55Re
  */
 export function create_signing_bridge(): NIP55WindowAPI {
   return async (request: NIP55Request): Promise<NIP55Result> => {
+    console.log('[signing_bridge] Request received:', request.type, 'id:', request.id)
+    const startTime = Date.now()
+
     try {
       // Basic input validation
       if (!request.id || !request.type) {
@@ -164,9 +210,14 @@ export function create_signing_bridge(): NIP55WindowAPI {
 
       // Execute signing directly - Android already checked permissions
       const result = await executeAutoSigning(request)
+
+      const duration = Date.now() - startTime
+      console.log('[signing_bridge] Returning result:', 'ok:', result.ok, 'duration:', duration, 'ms')
       return result
 
     } catch (error) {
+      const duration = Date.now() - startTime
+      console.error('[signing_bridge] Returning error:', error, 'duration:', duration, 'ms')
       return {
         ok     : false,
         type   : request.type,

@@ -3,17 +3,13 @@ package com.frostr.igloo.bridges
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import com.frostr.igloo.bridges.interfaces.ISigningBridge
 import com.frostr.igloo.MainActivity
+import com.frostr.igloo.debug.NIP55TraceContext
 import com.google.gson.Gson
-import com.frostr.igloo.bridges.SigningRequest
-import com.frostr.igloo.bridges.SigningResult
-import com.frostr.igloo.bridges.RequestContext
 import kotlinx.coroutines.*
-import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -21,17 +17,18 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Provides a unified JavaScript interface for the PWA to handle both internal signing
  * requests and external NIP-55 intents through the same permission and signing system.
+ *
+ * Extends BridgeBase for common functionality.
  */
 class UnifiedSigningBridge(
     private val context: Context,
-    private val webView: WebView
-) {
+    webView: WebView
+) : BridgeBase(webView), ISigningBridge {
+
     companion object {
-        private const val TAG = "UnifiedSigningBridge"
         private const val PWA_CALLER_ID = "com.frostr.igloo.pwa"
     }
 
-    private val gson = Gson()
     private val bridgeScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Dependencies
@@ -41,7 +38,7 @@ class UnifiedSigningBridge(
     private val pendingCallbacks = ConcurrentHashMap<String, String>()
 
     init {
-        Log.i(TAG, "UnifiedSigningBridge initialized")
+        logInfo("UnifiedSigningBridge initialized")
     }
 
     /**
@@ -49,7 +46,7 @@ class UnifiedSigningBridge(
      */
     fun initialize(signingService: UnifiedSigningService) {
         this.signingService = signingService
-        Log.i(TAG, "Bridge services initialized")
+        logInfo("Bridge services initialized")
     }
 
 
@@ -57,15 +54,19 @@ class UnifiedSigningBridge(
      * Handle signing request from PWA JavaScript
      */
     @JavascriptInterface
-    fun signEvent(eventJson: String, callbackId: String): String {
-        Log.i(TAG, "PWA signing request received with callbackId: $callbackId")
+    override fun signEvent(eventJson: String, callbackId: String): String {
+        val traceId = NIP55TraceContext.extractTraceId(callbackId)
+        logInfo("PWA signing request received with callbackId: $callbackId")
+        NIP55TraceContext.log(traceId, "PWA_SIGN_REQUEST",
+            "type" to "sign_event",
+            "payload_size" to eventJson.length)
 
         return try {
             // Use the callbackId as the request ID directly - no transformations
             val requestId = callbackId
             pendingCallbacks[requestId] = callbackId
 
-            Log.d(TAG, "Using consistent request ID: $requestId")
+            logDebug("Using consistent request ID: $requestId")
 
             // Create signing request from PWA context
             val signingRequest = SigningRequest(
@@ -86,15 +87,15 @@ class UnifiedSigningBridge(
             }
 
             // Return immediate response with request ID
-            gson.toJson(mapOf(
+            toJson(mapOf(
                 "requestId" to requestId,
                 "status" to "processing"
             ))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process PWA signing request", e)
+            logError("Failed to process PWA signing request", e)
             notifyPWACallback(callbackId, null, "Failed to process request: ${e.message}")
-            gson.toJson(mapOf("error" to "Request failed"))
+            toJson(mapOf("error" to "Request failed"))
         }
     }
 
@@ -102,15 +103,15 @@ class UnifiedSigningBridge(
      * Get public key from PWA JavaScript
      */
     @JavascriptInterface
-    fun getPublicKey(callbackId: String): String {
-        Log.i(TAG, "PWA public key request received with callbackId: $callbackId")
+    override fun getPublicKey(callbackId: String): String {
+        logInfo("PWA public key request received with callbackId: $callbackId")
 
         return try {
             // Use the callbackId as the request ID directly - no transformations
             val requestId = callbackId
             pendingCallbacks[requestId] = callbackId
 
-            Log.d(TAG, "Using consistent request ID: $requestId")
+            logDebug("Using consistent request ID: $requestId")
 
             val signingRequest = SigningRequest(
                 id = requestId,
@@ -128,15 +129,15 @@ class UnifiedSigningBridge(
                 handlePWASigningRequest(signingRequest)
             }
 
-            gson.toJson(mapOf(
+            toJson(mapOf(
                 "requestId" to requestId,
                 "status" to "processing"
             ))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process PWA public key request", e)
+            logError("Failed to process PWA public key request", e)
             notifyPWACallback(callbackId, null, "Failed to get public key: ${e.message}")
-            gson.toJson(mapOf("error" to "Request failed"))
+            toJson(mapOf("error" to "Request failed"))
         }
     }
 
@@ -145,17 +146,17 @@ class UnifiedSigningBridge(
      * NIP-04 encryption from PWA JavaScript
      */
     @JavascriptInterface
-    fun nip04Encrypt(plaintext: String, pubkey: String, callbackId: String): String {
-        Log.i(TAG, "PWA NIP-04 encryption request received with callbackId: $callbackId")
+    override fun nip04Encrypt(plaintext: String, pubkey: String, callbackId: String): String {
+        logInfo( "PWA NIP-04 encryption request received with callbackId: $callbackId")
 
         return try {
             // Use the callbackId as the request ID directly - no transformations
             val requestId = callbackId
             pendingCallbacks[requestId] = callbackId
 
-            Log.d(TAG, "Using consistent request ID: $requestId")
+            logDebug( "Using consistent request ID: $requestId")
 
-            val payload = gson.toJson(mapOf(
+            val payload = toJson(mapOf(
                 "plaintext" to plaintext,
                 "pubkey" to pubkey
             ))
@@ -176,15 +177,15 @@ class UnifiedSigningBridge(
                 handlePWASigningRequest(signingRequest)
             }
 
-            gson.toJson(mapOf(
+            toJson(mapOf(
                 "requestId" to requestId,
                 "status" to "processing"
             ))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process PWA NIP-04 encryption", e)
+            logError( "Failed to process PWA NIP-04 encryption", e)
             notifyPWACallback(callbackId, null, "Encryption failed: ${e.message}")
-            gson.toJson(mapOf("error" to "Request failed"))
+            toJson(mapOf("error" to "Request failed"))
         }
     }
 
@@ -192,17 +193,17 @@ class UnifiedSigningBridge(
      * NIP-04 decryption from PWA JavaScript
      */
     @JavascriptInterface
-    fun nip04Decrypt(ciphertext: String, pubkey: String, callbackId: String): String {
-        Log.i(TAG, "PWA NIP-04 decryption request received with callbackId: $callbackId")
+    override fun nip04Decrypt(ciphertext: String, pubkey: String, callbackId: String): String {
+        logInfo( "PWA NIP-04 decryption request received with callbackId: $callbackId")
 
         return try {
             // Use the callbackId as the request ID directly - no transformations
             val requestId = callbackId
             pendingCallbacks[requestId] = callbackId
 
-            Log.d(TAG, "Using consistent request ID: $requestId")
+            logDebug( "Using consistent request ID: $requestId")
 
-            val payload = gson.toJson(mapOf(
+            val payload = toJson(mapOf(
                 "ciphertext" to ciphertext,
                 "pubkey" to pubkey
             ))
@@ -223,15 +224,15 @@ class UnifiedSigningBridge(
                 handlePWASigningRequest(signingRequest)
             }
 
-            gson.toJson(mapOf(
+            toJson(mapOf(
                 "requestId" to requestId,
                 "status" to "processing"
             ))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process PWA NIP-04 decryption", e)
+            logError( "Failed to process PWA NIP-04 decryption", e)
             notifyPWACallback(callbackId, null, "Decryption failed: ${e.message}")
-            gson.toJson(mapOf("error" to "Request failed"))
+            toJson(mapOf("error" to "Request failed"))
         }
     }
 
@@ -240,8 +241,8 @@ class UnifiedSigningBridge(
      * Handle NIP-55 result directly from PWA Promise
      */
     @JavascriptInterface
-    fun handleNIP55Result(resultJson: String): String {
-        Log.i(TAG, "Direct NIP-55 result received: $resultJson")
+    override fun handleNIP55Result(resultJson: String): String {
+        logInfo( "Direct NIP-55 result received: $resultJson")
 
         return try {
             val result = gson.fromJson(resultJson, Map::class.java)
@@ -250,20 +251,25 @@ class UnifiedSigningBridge(
             val error = result["reason"] as? String
             val requestId = result["id"] as? String ?: "unknown"
 
-            Log.d(TAG, "Parsed NIP-55 result - success: $success, id: $requestId")
+            val traceId = NIP55TraceContext.extractTraceId(requestId)
+            NIP55TraceContext.log(traceId, "NIP55_RESULT_RECEIVED",
+                "success" to success,
+                "has_result" to (resultData != null),
+                "error" to error?.take(30))
+            logDebug( "Parsed NIP-55 result - success: $success, id: $requestId")
 
             // Return result to MainActivity directly
             bridgeScope.launch(Dispatchers.Main) {
                 val activity = context as? MainActivity
                 if (activity != null) {
                     if (success && resultData != null) {
-                        Log.d(TAG, "Setting RESULT_OK for NIP-55 request: $requestId")
+                        logDebug( "Setting RESULT_OK for NIP-55 request: $requestId")
                         activity.setResult(Activity.RESULT_OK, Intent().apply {
                             putExtra("result", resultData)
                             putExtra("id", requestId)
                         })
                     } else {
-                        Log.d(TAG, "Setting RESULT_CANCELED for NIP-55 request: $requestId")
+                        logDebug( "Setting RESULT_CANCELED for NIP-55 request: $requestId")
                         activity.setResult(Activity.RESULT_CANCELED, Intent().apply {
                             putExtra("error", error ?: "Request failed")
                             putExtra("id", requestId)
@@ -273,10 +279,10 @@ class UnifiedSigningBridge(
                 }
             }
 
-            gson.toJson(mapOf("status" to "processed"))
+            toJson(mapOf("status" to "processed"))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to handle direct NIP-55 result", e)
+            logError( "Failed to handle direct NIP-55 result", e)
 
             // Fallback - finish with error
             bridgeScope.launch(Dispatchers.Main) {
@@ -290,7 +296,7 @@ class UnifiedSigningBridge(
                 }
             }
 
-            gson.toJson(mapOf("error" to "Failed to process result"))
+            toJson(mapOf("error" to "Failed to process result"))
         }
     }
 
@@ -298,8 +304,8 @@ class UnifiedSigningBridge(
      * Handle user response to a pending signing request
      */
     @JavascriptInterface
-    fun approveSigningRequest(requestId: String, approved: Boolean, signature: String?): String {
-        Log.i(TAG, "User response received for request: $requestId, approved: $approved")
+    override fun approveSigningRequest(requestId: String, approved: Boolean, signature: String?): String {
+        logInfo( "User response received for request: $requestId, approved: $approved")
 
         return try {
             bridgeScope.launch {
@@ -325,11 +331,11 @@ class UnifiedSigningBridge(
                 }
             }
 
-            gson.toJson(mapOf("status" to "processed"))
+            toJson(mapOf("status" to "processed"))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process user response", e)
-            gson.toJson(mapOf("error" to "Failed to process response"))
+            logError( "Failed to process user response", e)
+            toJson(mapOf("error" to "Failed to process response"))
         }
     }
 
@@ -337,8 +343,8 @@ class UnifiedSigningBridge(
      * Handle user response from PWA JavaScript (called by PWA when user approves/denies)
      */
     @JavascriptInterface
-    fun handleUserResponse(requestId: String, approved: Boolean, result: String?): String {
-        Log.i(TAG, "PWA user response received for request: $requestId, approved: $approved")
+    override fun handleUserResponse(requestId: String, approved: Boolean, result: String?): String {
+        logInfo( "PWA user response received for request: $requestId, approved: $approved")
 
         return try {
             // Handle all requests through the signing service
@@ -363,11 +369,11 @@ class UnifiedSigningBridge(
                     }
                 }
             }
-            gson.toJson(mapOf("status" to "processed"))
+            toJson(mapOf("status" to "processed"))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to process PWA user response", e)
-            gson.toJson(mapOf("error" to "Failed to process response"))
+            logError( "Failed to process PWA user response", e)
+            toJson(mapOf("error" to "Failed to process response"))
         }
     }
 
@@ -375,13 +381,13 @@ class UnifiedSigningBridge(
      * Get pending signing requests for UI display
      */
     @JavascriptInterface
-    fun getPendingRequests(): String {
+    override fun getPendingRequests(): String {
         return try {
             val pendingRequests = signingService.getPendingRequests()
-            gson.toJson(pendingRequests)
+            toJson(pendingRequests)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get pending requests", e)
-            gson.toJson(emptyList<SigningRequest>())
+            logError( "Failed to get pending requests", e)
+            toJson(emptyList<SigningRequest>())
         }
     }
 
@@ -389,8 +395,8 @@ class UnifiedSigningBridge(
      * Cancel a pending signing request
      */
     @JavascriptInterface
-    fun cancelSigningRequest(requestId: String): String {
-        Log.i(TAG, "Cancelling signing request: $requestId")
+    override fun cancelSigningRequest(requestId: String): String {
+        logInfo( "Cancelling signing request: $requestId")
 
         return try {
             bridgeScope.launch {
@@ -403,11 +409,11 @@ class UnifiedSigningBridge(
                 }
             }
 
-            gson.toJson(mapOf("status" to "cancelled"))
+            toJson(mapOf("status" to "cancelled"))
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to cancel request", e)
-            gson.toJson(mapOf("error" to "Failed to cancel request"))
+            logError( "Failed to cancel request", e)
+            toJson(mapOf("error" to "Failed to cancel request"))
         }
     }
 
@@ -415,7 +421,12 @@ class UnifiedSigningBridge(
     // Private helper methods
 
     private suspend fun handlePWASigningRequest(request: SigningRequest) {
+        val traceId = NIP55TraceContext.extractTraceId(request.id)
         try {
+            NIP55TraceContext.log(traceId, "PWA_SIGNING_START",
+                "type" to request.type,
+                "app" to request.callingApp.substringAfterLast('.'))
+
             val requestContext = PWARequestContext(webView)
             val result = signingService.handleSigningRequest(request, requestContext)
 
@@ -423,23 +434,28 @@ class UnifiedSigningBridge(
             if (callbackId != null) {
                 when (result) {
                     is SigningResult.Success -> {
+                        NIP55TraceContext.log(traceId, "PWA_SIGNING_SUCCESS")
                         notifyPWACallback(callbackId, result.signature, null)
                     }
                     is SigningResult.Denied -> {
+                        NIP55TraceContext.log(traceId, "PWA_SIGNING_DENIED", "reason" to result.reason)
                         notifyPWACallback(callbackId, null, result.reason)
                     }
                     is SigningResult.Error -> {
+                        NIP55TraceContext.log(traceId, "PWA_SIGNING_ERROR", "message" to result.message)
                         notifyPWACallback(callbackId, null, result.message)
                     }
                     is SigningResult.Pending -> {
+                        NIP55TraceContext.log(traceId, "PWA_SIGNING_PENDING")
                         // For pending requests, the callback will be handled when user responds
-                        Log.d(TAG, "Request pending, callback will be handled later")
+                        logDebug( "Request pending, callback will be handled later")
                     }
                 }
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling PWA signing request", e)
+            NIP55TraceContext.logError(traceId, "PWA_SIGNING", e.message ?: "Unknown error")
+            logError( "Error handling PWA signing request", e)
             val callbackId = request.metadata["callbackId"]
             if (callbackId != null) {
                 notifyPWACallback(callbackId, null, "Request processing failed: ${e.message}")
@@ -448,19 +464,16 @@ class UnifiedSigningBridge(
     }
 
     private fun notifyPWACallback(callbackId: String, signature: String?, error: String?) {
-        webView.post {
-            val resultJson = if (error != null) {
-                gson.toJson(mapOf("error" to error))
-            } else {
-                gson.toJson(mapOf("signature" to signature))
-            }
-
-            Log.d(TAG, "Notifying PWA callback for ID: $callbackId")
-
-            // Normal PWA callback
-            val script = "window.SigningBridge && window.SigningBridge.handleCallback('$callbackId', $resultJson)"
-            webView.evaluateJavascript(script, null)
+        val resultJson = if (error != null) {
+            toJson(mapOf("error" to error))
+        } else {
+            toJson(mapOf("signature" to signature))
         }
+
+        logDebug("Notifying PWA callback for ID: $callbackId")
+
+        // Use BridgeBase's notifyCallbackJson for proper escaping and thread safety
+        notifyCallbackJson("SigningBridge", "handleCallback", callbackId, resultJson)
     }
 
 
@@ -468,8 +481,8 @@ class UnifiedSigningBridge(
     /**
      * Clean up resources
      */
-    fun cleanup() {
-        Log.i(TAG, "Cleaning up UnifiedSigningBridge")
+    override fun cleanup() {
+        logInfo("Cleaning up UnifiedSigningBridge")
         pendingCallbacks.clear()
         bridgeScope.cancel()
     }

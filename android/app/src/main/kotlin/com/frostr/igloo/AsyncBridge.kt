@@ -14,6 +14,10 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import com.frostr.igloo.debug.NIP55TraceContext
+import com.frostr.igloo.debug.NIP55Timing
+import com.frostr.igloo.debug.DebugConfig
+import com.frostr.igloo.util.JavaScriptEscaper
 
 /**
  * Modern Async Bridge for NIP-55 Communication
@@ -31,6 +35,9 @@ class AsyncBridge(private val webView: WebView) {
 
     // Thread-safe map to track pending requests
     private val continuations: MutableMap<String, CancellableContinuation<com.frostr.igloo.NIP55Result>> = ConcurrentHashMap()
+
+    // Track request start times for timing (requestId -> Pair<traceId, startTime>)
+    private val requestTiming: MutableMap<String, Pair<String, Long>> = ConcurrentHashMap()
 
     /**
      * Initialize the async bridge with WebMessageListener
@@ -56,16 +63,31 @@ class AsyncBridge(private val webView: WebView) {
      * Call NIP-55 async method and await result
      */
     suspend fun callNip55Async(type: String, id: String, host: String, params: Map<String, Any>? = null, timeoutMs: Long = DEFAULT_TIMEOUT_MS): com.frostr.igloo.NIP55Result {
+        // Extract trace ID from the request ID (first 8 chars)
+        val traceId = NIP55TraceContext.extractTraceId(id)
+        val startTime = System.currentTimeMillis()
+
         Log.d(TAG, "Calling NIP-55 async: $type ($id)")
+        NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_CALL",
+            "type" to type,
+            "host" to host.substringAfterLast('.'))
 
         return withTimeout(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val requestId = UUID.randomUUID().toString()
                 continuations[requestId] = cont
+                Log.d(TAG, "Registered continuation: internal_id=$requestId, total_pending=${continuations.size}")
+
+                // Track timing for this request
+                requestTiming[requestId] = Pair(traceId, startTime)
 
                 // Build the JavaScript call
                 val requestJson = buildRequestJson(id, type, host, params)
                 val script = buildJavaScript(requestId, requestJson)
+
+                NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_JS_EXEC",
+                    "internal_id" to requestId.take(8))
+                Log.d(TAG, "Executing JS for internal_id=$requestId (NIP55 id=$id)")
 
                 // Execute the script on Main thread (WebView requires this)
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -73,6 +95,8 @@ class AsyncBridge(private val webView: WebView) {
                         webView.evaluateJavascript(script, null)
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to execute JavaScript", e)
+                        NIP55TraceContext.logError(traceId, "ASYNC_BRIDGE", "JS execution failed: ${e.message}")
+                        requestTiming.remove(requestId)
                         val errorCont = continuations.remove(requestId)
                         if (errorCont?.isActive == true) {
                             errorCont.resumeWithException(e)
@@ -83,6 +107,8 @@ class AsyncBridge(private val webView: WebView) {
                 // Handle cancellation
                 cont.invokeOnCancellation {
                     Log.d(TAG, "Request cancelled: $requestId")
+                    NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_CANCELLED")
+                    requestTiming.remove(requestId)
                     continuations.remove(requestId)
                 }
             }
@@ -99,8 +125,11 @@ class AsyncBridge(private val webView: WebView) {
         isMainFrame: Boolean,
         replyProxy: androidx.webkit.JavaScriptReplyProxy
     ) {
-        val data = message.data ?: return
-        Log.d(TAG, "Received web message: $data")
+        val data = message.data ?: run {
+            Log.w(TAG, "Received web message with null data")
+            return
+        }
+        Log.d(TAG, "Received web message (${data.length} chars): ${data.take(200)}...")
 
         try {
             val json = JSONObject(data)
@@ -112,31 +141,60 @@ class AsyncBridge(private val webView: WebView) {
             }
 
             val id = json.getString("id")
+            val msgType = json.getString("type")
+            Log.d(TAG, "Processing response: id=$id, type=$msgType, pending_continuations=${continuations.size}")
+
             val continuation = continuations.remove(id)
 
+            // Get timing info for this request
+            val timingInfo = requestTiming.remove(id)
+            val traceId = timingInfo?.first ?: id.take(8)
+            val duration = timingInfo?.let { System.currentTimeMillis() - it.second } ?: -1L
+
             if (continuation == null) {
-                Log.w(TAG, "No continuation found for request: $id")
+                Log.w(TAG, "No continuation found for request: $id (pending: ${continuations.keys.take(3)})")
+                NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_ORPHAN",
+                    "internal_id" to id.take(8))
                 return
             }
 
-            when (json.getString("type")) {
+            Log.d(TAG, "Found continuation for request: $id, resuming with $msgType response")
+
+            when (msgType) {
                 "result" -> {
                     val resultValue = json.getString("value")
-                    Log.d(TAG, "Request completed successfully: $id")
+                    Log.d(TAG, "Request completed successfully: $id, result_length=${resultValue.length}")
+
+                    NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_RESULT",
+                        "success" to true,
+                        "duration_ms" to duration,
+                        "result_size" to resultValue.length)
+
+                    // Log timing with threshold-based levels
+                    timingInfo?.second?.let { startTime ->
+                        NIP55Timing.logDuration(TAG, traceId, "bridge_roundtrip", startTime)
+                    }
+
                     // Parse the result as a NIP55Result object
                     val resultJson = JSONObject(resultValue)
                     val nip55Result = com.frostr.igloo.NIP55Result(
                         ok = resultJson.optBoolean("ok", true),
                         type = resultJson.optString("type", "result"),
                         id = resultJson.optString("id", id),
-                        result = resultJson.optString("result"),
-                        reason = null
+                        result = if (resultJson.has("result")) resultJson.optString("result") else null,
+                        reason = if (resultJson.has("reason")) resultJson.optString("reason") else null
                     )
                     continuation.resume(nip55Result)
                 }
                 "error" -> {
                     val errorValue = json.getString("value")
                     Log.w(TAG, "Request failed: $id - $errorValue")
+
+                    NIP55TraceContext.log(traceId, "ASYNC_BRIDGE_RESULT",
+                        "success" to false,
+                        "duration_ms" to duration,
+                        "error" to errorValue.take(50))
+
                     val errorResult = com.frostr.igloo.NIP55Result(
                         ok = false,
                         type = "error",
@@ -148,6 +206,7 @@ class AsyncBridge(private val webView: WebView) {
                 }
                 else -> {
                     Log.w(TAG, "Unknown response type: ${json.getString("type")}")
+                    NIP55TraceContext.logError(traceId, "ASYNC_BRIDGE", "Unknown response type: ${json.getString("type")}")
                     continuation.resumeWithException(Exception("Invalid response type"))
                 }
             }
@@ -251,15 +310,7 @@ class AsyncBridge(private val webView: WebView) {
      */
     private fun buildJavaScript(id: String, requestJson: String): String {
         // Properly escape JSON for embedding in JavaScript string literal
-        // Must escape: backslash, single quote, newline, carriage return, and other control characters
-        val escapedJson = requestJson
-            .replace("\\", "\\\\")    // Escape backslashes FIRST (before other escapes)
-            .replace("'", "\\'")       // Escape single quotes
-            .replace("\n", "\\n")      // Escape newlines
-            .replace("\r", "\\r")      // Escape carriage returns
-            .replace("\t", "\\t")      // Escape tabs
-            .replace("\b", "\\b")      // Escape backspace
-            .replace("\u000c", "\\f")  // Escape form feed
+        val escapedJson = JavaScriptEscaper.escape(requestJson)
 
         return """
             (async function() {

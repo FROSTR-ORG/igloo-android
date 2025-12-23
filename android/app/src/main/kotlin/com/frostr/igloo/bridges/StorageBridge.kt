@@ -8,6 +8,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
+import com.frostr.igloo.bridges.interfaces.IStorageBridge
+import com.frostr.igloo.debug.DebugConfig
 
 /**
  * Storage Bridge - Encrypted replacement for localStorage/sessionStorage
@@ -16,7 +18,7 @@ import com.google.gson.JsonSyntaxException
  * while maintaining 100% API compatibility with the Web Storage API.
  * The PWA remains completely unaware of this implementation.
  */
-class StorageBridge(private val context: Context) {
+class StorageBridge(private val context: Context) : IStorageBridge {
 
     companion object {
         private const val TAG = "StorageBridge"
@@ -26,6 +28,17 @@ class StorageBridge(private val context: Context) {
         private const val SESSION_BACKUP_KEY = "__igloo_session_backup"
         private const val SESSION_BACKUP_TIMESTAMP_KEY = "__igloo_session_backup_timestamp"
         private const val BACKUP_TIMEOUT_MS = 30 * 60 * 1000L // 30 minutes
+
+        /**
+         * Log storage operations when verbose logging is enabled
+         */
+        private fun logOperation(operation: String, storageType: String, key: String? = null, details: String? = null) {
+            if (!DebugConfig.VERBOSE_LOGGING) return
+
+            val keyInfo = key?.let { " key=${it.take(32)}${if (it.length > 32) "..." else ""}" } ?: ""
+            val detailInfo = details?.let { " $it" } ?: ""
+            Log.d(TAG, "$operation($storageType)$keyInfo$detailInfo")
+        }
     }
 
     private val gson = Gson()
@@ -72,27 +85,30 @@ class StorageBridge(private val context: Context) {
      * @return Success/error result
      */
     @JavascriptInterface
-    fun setItem(storageType: String, key: String, value: String): String {
+    override fun setItem(storageType: String, key: String, value: String): String {
         return try {
             // Validate parameters
             if (key.isEmpty()) {
-                return gson.toJson(StorageResult.Error("Key cannot be empty"))
+                logOperation("setItem", storageType, key, "error=empty_key")
+                return gson.toJson(StorageOperationResult.Error("Key cannot be empty"))
             }
 
             // Check storage quota
             val prefs = getPreferences(storageType)
             if (!checkStorageQuota(prefs, key, value)) {
-                return gson.toJson(StorageResult.Error("Storage quota exceeded"))
+                logOperation("setItem", storageType, key, "error=quota_exceeded size=${value.length}")
+                return gson.toJson(StorageOperationResult.Error("Storage quota exceeded"))
             }
 
             // Store the value
             prefs.edit().putString(key, value).apply()
 
-            gson.toJson(StorageResult.Success("Item stored"))
+            logOperation("setItem", storageType, key, "size=${value.length}")
+            gson.toJson(StorageOperationResult.Success("Item stored"))
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set item in storage", e)
-            gson.toJson(StorageResult.Error("Storage failed: ${e.message}"))
+            gson.toJson(StorageOperationResult.Error("Storage failed: ${e.message}"))
         }
     }
 
@@ -103,13 +119,44 @@ class StorageBridge(private val context: Context) {
      * @return Item value or null
      */
     @JavascriptInterface
-    fun getItem(storageType: String, key: String): String? {
+    override fun getItem(storageType: String, key: String): String? {
         return try {
             val prefs = getPreferences(storageType)
-            prefs.getString(key, null)
+            val value = prefs.getString(key, null)
+            logOperation("getItem", storageType, key, "found=${value != null}${value?.let { " size=${it.length}" } ?: ""}")
+            value
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get item from storage", e)
             null
+        }
+    }
+
+    /**
+     * Get an item from storage with explicit result type.
+     *
+     * Unlike getItem() which returns null for both "not found" and "error",
+     * this method returns a StorageResult that distinguishes between:
+     * - Success: value was found
+     * - NotFound: key does not exist
+     * - Error: an exception occurred
+     *
+     * @param storageType "local" or "session"
+     * @param key Storage key
+     * @return StorageResult with the value, not found, or error
+     */
+    override fun getItemResult(storageType: String, key: String): StorageResult<String> {
+        return try {
+            val prefs = getPreferences(storageType)
+            val value = prefs.getString(key, null)
+            logOperation("getItemResult", storageType, key, "found=${value != null}${value?.let { " size=${it.length}" } ?: ""}")
+            if (value != null) {
+                StorageResult.Success(value)
+            } else {
+                StorageResult.NotFound(key)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get item from storage", e)
+            StorageResult.Error("Failed to get item: ${e.message}", e)
         }
     }
 
@@ -120,14 +167,15 @@ class StorageBridge(private val context: Context) {
      * @return Success/error result
      */
     @JavascriptInterface
-    fun removeItem(storageType: String, key: String): String {
+    override fun removeItem(storageType: String, key: String): String {
         return try {
             val prefs = getPreferences(storageType)
             prefs.edit().remove(key).apply()
-            gson.toJson(StorageResult.Success("Item removed"))
+            logOperation("removeItem", storageType, key)
+            gson.toJson(StorageOperationResult.Success("Item removed"))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to remove item from storage", e)
-            gson.toJson(StorageResult.Error("Remove failed: ${e.message}"))
+            gson.toJson(StorageOperationResult.Error("Remove failed: ${e.message}"))
         }
     }
 
@@ -137,14 +185,16 @@ class StorageBridge(private val context: Context) {
      * @return Success/error result
      */
     @JavascriptInterface
-    fun clear(storageType: String): String {
+    override fun clear(storageType: String): String {
         return try {
             val prefs = getPreferences(storageType)
+            val itemCount = prefs.all.size
             prefs.edit().clear().apply()
-            gson.toJson(StorageResult.Success("Storage cleared"))
+            logOperation("clear", storageType, details = "items_removed=$itemCount")
+            gson.toJson(StorageOperationResult.Success("Storage cleared"))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear storage", e)
-            gson.toJson(StorageResult.Error("Clear failed: ${e.message}"))
+            gson.toJson(StorageOperationResult.Error("Clear failed: ${e.message}"))
         }
     }
 
@@ -155,7 +205,7 @@ class StorageBridge(private val context: Context) {
      * @return Key name or null
      */
     @JavascriptInterface
-    fun key(storageType: String, index: Int): String? {
+    override fun key(storageType: String, index: Int): String? {
         return try {
             val prefs = getPreferences(storageType)
             val keys = prefs.all.keys.toList().sorted()
@@ -172,7 +222,7 @@ class StorageBridge(private val context: Context) {
      * @return Number of items
      */
     @JavascriptInterface
-    fun length(storageType: String): Int {
+    override fun length(storageType: String): Int {
         return try {
             val prefs = getPreferences(storageType)
             prefs.all.size
@@ -188,7 +238,7 @@ class StorageBridge(private val context: Context) {
      * @return JSON array of keys
      */
     @JavascriptInterface
-    fun getAllKeys(storageType: String): String {
+    override fun getAllKeys(storageType: String): String {
         return try {
             val prefs = getPreferences(storageType)
             val keys = prefs.all.keys.toList().sorted()
@@ -205,7 +255,7 @@ class StorageBridge(private val context: Context) {
      * @return Storage usage info JSON
      */
     @JavascriptInterface
-    fun getStorageInfo(storageType: String): String {
+    override fun getStorageInfo(storageType: String): String {
         return try {
             val prefs = getPreferences(storageType)
             val allData = prefs.all
@@ -234,7 +284,7 @@ class StorageBridge(private val context: Context) {
     /**
      * Clear session storage (called on app restart)
      */
-    fun clearSessionStorage() {
+    override fun clearSessionStorage() {
         try {
             sessionStoragePrefs.edit().clear().apply()
         } catch (e: Exception) {
@@ -246,9 +296,10 @@ class StorageBridge(private val context: Context) {
      * Backup session storage to persistent local storage
      * Called during app pause to preserve session data across process termination
      */
-    fun backupSessionStorage() {
+    override fun backupSessionStorage() {
         try {
             val sessionData = sessionStoragePrefs.all
+            Log.d(TAG, "Session backup: checking ${sessionData.size} items, keys=${sessionData.keys}")
             if (sessionData.isNotEmpty()) {
                 val backupJson = gson.toJson(sessionData)
                 val timestamp = System.currentTimeMillis()
@@ -256,6 +307,9 @@ class StorageBridge(private val context: Context) {
                     .putString(SESSION_BACKUP_KEY, backupJson)
                     .putLong(SESSION_BACKUP_TIMESTAMP_KEY, timestamp)
                     .apply()
+                Log.d(TAG, "Session backup created: ${sessionData.size} items, ${backupJson.length} bytes")
+            } else {
+                Log.d(TAG, "Session backup skipped: no items to backup")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to backup session storage", e)
@@ -267,14 +321,21 @@ class StorageBridge(private val context: Context) {
      * Called during app startup to restore session data after process termination
      * @return true if backup was restored, false if no valid backup found
      */
-    fun restoreSessionStorage(): Boolean {
+    override fun restoreSessionStorage(): Boolean {
         try {
             val backupJson = localStoragePrefs.getString(SESSION_BACKUP_KEY, null)
             val timestamp = localStoragePrefs.getLong(SESSION_BACKUP_TIMESTAMP_KEY, 0)
+            val backupAge = System.currentTimeMillis() - timestamp
 
-            if (backupJson == null) return false
+            Log.d(TAG, "Session restore: checking backup (exists=${backupJson != null}, age=${backupAge}ms, max=${BACKUP_TIMEOUT_MS}ms)")
+
+            if (backupJson == null) {
+                Log.d(TAG, "Session restore: no backup found")
+                return false
+            }
 
             if (!isRecentBackup(timestamp)) {
+                Log.d(TAG, "Session restore: backup expired (age=${backupAge}ms, max=${BACKUP_TIMEOUT_MS}ms)")
                 clearSessionBackup()
                 return false
             }
@@ -283,11 +344,14 @@ class StorageBridge(private val context: Context) {
             val sessionData = gson.fromJson<Map<String, Any>>(backupJson,
                 object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type)
 
+            Log.d(TAG, "Session restore: restoring ${sessionData.size} items, keys=${sessionData.keys}")
+
             val editor = sessionStoragePrefs.edit()
             sessionData.forEach { (key, value) ->
                 editor.putString(key, value.toString())
             }
             editor.apply()
+            Log.d(TAG, "Session restore: restored ${sessionData.size} items (age=${backupAge}ms)")
             return true
 
         } catch (e: Exception) {
@@ -308,7 +372,7 @@ class StorageBridge(private val context: Context) {
     /**
      * Clear session backup data from local storage
      */
-    fun clearSessionBackup() {
+    override fun clearSessionBackup() {
         try {
             localStoragePrefs.edit()
                 .remove(SESSION_BACKUP_KEY)
@@ -323,14 +387,14 @@ class StorageBridge(private val context: Context) {
      * Enhanced clear method to also clear backups on explicit logout
      */
     @JavascriptInterface
-    fun clearSessionStorageAndBackup(): String {
+    override fun clearSessionStorageAndBackup(): String {
         return try {
             clearSessionStorage()
             clearSessionBackup()
-            gson.toJson(StorageResult.Success("Session storage and backup cleared"))
+            gson.toJson(StorageOperationResult.Success("Session storage and backup cleared"))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear session storage and backup", e)
-            gson.toJson(StorageResult.Error("Clear failed: ${e.message}"))
+            gson.toJson(StorageOperationResult.Error("Clear failed: ${e.message}"))
         }
     }
 
@@ -401,9 +465,13 @@ class StorageBridge(private val context: Context) {
  * Data classes for storage bridge communication
  */
 
-sealed class StorageResult {
-    data class Success(val message: String) : StorageResult()
-    data class Error(val message: String) : StorageResult()
+/**
+ * Simple result type for storage operations that don't return values.
+ * Used for setItem, removeItem, clear operations.
+ */
+sealed class StorageOperationResult {
+    data class Success(val message: String) : StorageOperationResult()
+    data class Error(val message: String) : StorageOperationResult()
 }
 
 data class StorageInfo(

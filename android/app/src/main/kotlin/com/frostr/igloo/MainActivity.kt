@@ -2,86 +2,190 @@ package com.frostr.igloo
 
 import androidx.appcompat.app.AppCompatActivity
 import android.app.PendingIntent
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.inputmethod.InputMethodManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
 import android.webkit.WebView
-import android.webkit.ConsoleMessage
-import androidx.core.app.NotificationCompat
-import com.frostr.igloo.bridges.IglooWebViewClient
-import com.frostr.igloo.bridges.WebSocketBridge
-import com.frostr.igloo.bridges.StorageBridge
-import com.frostr.igloo.bridges.QRScannerBridge
-import com.frostr.igloo.bridges.UnifiedSigningBridge
-import com.frostr.igloo.bridges.UnifiedSigningService
+import com.frostr.igloo.bridges.BridgeFactory
+import com.frostr.igloo.bridges.BridgeSet
+import com.frostr.igloo.bridges.NodeStateBridge
+import com.frostr.igloo.health.IglooHealthManager
 import com.frostr.igloo.debug.NIP55DebugLogger
+import com.frostr.igloo.di.AppContainer
+import com.frostr.igloo.ui.UIOverlayManager
+import com.frostr.igloo.webview.WebViewManager
 import com.google.gson.Gson
 import kotlinx.coroutines.*
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicBoolean
-
-// Import NIP55Request data class
-import com.frostr.igloo.NIP55Request
 
 /**
  * Main Activity with Polyfill Integration
  *
  * This activity serves the PWA from assets with custom protocol while maintaining full functionality.
  * Provides secure architecture with transparent polyfills for WebSocket, Storage, Camera, and Signing operations.
+ *
+ * Uses Phase 4 infrastructure (WebViewManager, BridgeFactory, AppContainer) for WebView setup.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
 
     companion object {
         private const val TAG = "SecureIglooWrapper"
-        private const val CUSTOM_SCHEME = "igloo"
-        private const val PWA_HOST = "app"
-        private const val SECURE_PWA_URL = "$CUSTOM_SCHEME://$PWA_HOST/index.html"
 
         // Reference to active MainActivity instance
         @Volatile
         private var activeInstance: MainActivity? = null
 
         /**
-         * Get WebView instance for ContentProvider access
-         * Returns null if MainActivity is not active or WebView is not initialized
+         * Static WebView holder - survives activity destruction when foreground service is running.
+         * This allows NIP-55 signing to continue using the same WebView/bifrost connection
+         * even when the Activity UI is destroyed.
+         */
+        @Volatile
+        private var persistentWebView: WebView? = null
+
+        /**
+         * Static WebViewManager holder - keeps bridges (WebSocket, Storage, etc.) alive
+         * when the Activity is destroyed but service is running.
+         */
+        @Volatile
+        private var persistentWebViewManager: WebViewManager? = null
+
+        /**
+         * Flag indicating the persistent WebView is ready for signing
+         */
+        @Volatile
+        private var isPersistentWebViewReady: Boolean = false
+
+        /**
+         * Flag indicating user is actively in Igloo (manually switched here)
+         * When true, NIP-55 handlers should not automatically return focus to calling apps
+         */
+        @Volatile
+        var userActiveInIgloo: Boolean = false
+            private set
+
+        /**
+         * Set by MainActivity when user manually brings it to foreground
+         */
+        fun setUserActive(active: Boolean) {
+            userActiveInIgloo = active
+            Log.d(TAG, "User active in Igloo: $active")
+        }
+
+        /**
+         * Get WebView instance for NIP-55 signing.
+         * Returns the persistent WebView if available (when service is running),
+         * otherwise returns the active instance's WebView.
          */
         @JvmStatic
         fun getWebViewInstance(): WebView? {
+            // First try persistent WebView (survives activity destruction)
+            persistentWebView?.let { return it }
+            // Fall back to active instance
             val instance = activeInstance ?: return null
-            return try {
-                if (instance.isSecurePWALoaded) {
-                    instance.webView
-                } else {
-                    null
-                }
-            } catch (e: UninitializedPropertyAccessException) {
-                null
+            return instance.webViewManager?.getWebView()
+        }
+
+        /**
+         * Check if signing is ready (WebView + PWA + bifrost all initialized)
+         */
+        @JvmStatic
+        fun isSigningReady(): Boolean {
+            // Check persistent WebView first
+            if (isPersistentWebViewReady && persistentWebView != null) {
+                return true
+            }
+            // Fall back to active instance
+            val instance = activeInstance ?: return false
+            return instance.isSigningReady
+        }
+
+        /**
+         * Clear the persistent WebView and manager (called when node is locked or service stops)
+         */
+        @JvmStatic
+        fun clearPersistentWebView() {
+            Log.d(TAG, "Clearing persistent WebView and manager")
+            persistentWebViewManager?.cleanup()
+            persistentWebViewManager = null
+            persistentWebView = null
+            isPersistentWebViewReady = false
+        }
+
+        /**
+         * Set the persistent WebView (called when node goes online)
+         */
+        @JvmStatic
+        fun setPersistentWebView(webView: WebView) {
+            Log.d(TAG, "Setting persistent WebView for background signing")
+            persistentWebView = webView
+            isPersistentWebViewReady = true
+        }
+
+        /**
+         * Set the persistent WebViewManager (called from onDestroy when service is running)
+         */
+        @JvmStatic
+        fun setPersistentWebViewManager(manager: WebViewManager) {
+            Log.d(TAG, "Setting persistent WebViewManager for background signing")
+            persistentWebViewManager = manager
+        }
+
+        /**
+         * Called when node is online and ready for background operation.
+         * If this was a cold start, moves the activity to background.
+         */
+        @JvmStatic
+        fun onNodeReadyForBackground() {
+            val activity = activeInstance
+            if (activity == null) {
+                Log.w(TAG, "onNodeReadyForBackground: No active instance")
+                return
+            }
+
+            if (activity.isColdStart) {
+                Log.d(TAG, "Cold start complete - moving to background")
+                activity.isColdStart = false  // Reset flag
+                // Move to background after a short delay to ensure everything is stable
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (activeInstance != null) {
+                        Log.d(TAG, "Moving activity to background")
+                        activity.moveTaskToBack(true)
+                    }
+                }, 500)  // 500ms delay for stability
             }
         }
     }
 
-    private lateinit var webView: WebView
-    private lateinit var asyncBridge: AsyncBridge
-    private lateinit var webSocketBridge: WebSocketBridge
-    private lateinit var storageBridge: StorageBridge
-    private lateinit var qrScannerBridge: QRScannerBridge
-    private lateinit var signingBridge: UnifiedSigningBridge
-    private lateinit var signingService: UnifiedSigningService
-    private var isSecurePWALoaded = false
+    // Phase 4 infrastructure
+    private var webViewManager: WebViewManager? = null
+    private lateinit var container: AppContainer
+
+    // Convenience accessors for bridges
+    private val bridges: BridgeSet?
+        get() = webViewManager?.getBridges()
+
     private var isSigningReady = false
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val gson = Gson()
-    private var signingOverlay: android.view.View? = null
-    private var splashScreen: android.view.View? = null
+    private lateinit var overlayManager: UIOverlayManager
     private var isNormalLaunch = false  // Track if this is a normal user launch (not NIP-55)
+    private var isColdStart = false  // Track if this is a cold start from NIP-55 request
+
+    // Pending unlock request - processed after user unlocks the node
+    private var pendingUnlockRequest: PendingUnlockRequest? = null
+
+    private data class PendingUnlockRequest(
+        val requestId: String,
+        val requestType: String,
+        val params: Map<String, String>,
+        val callingApp: String
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // IMMEDIATELY move to background if this is a service request - before any UI setup
@@ -110,6 +214,13 @@ class MainActivity : AppCompatActivity() {
         // Register this instance as active
         activeInstance = this
 
+        // Initialize IglooHealthManager with context for wakeup Intents
+        IglooHealthManager.init(this)
+
+        // Clear any stale active handler from a previous app session
+        // The activeHandler reference becomes stale when app is killed/restarted
+        IglooHealthManager.clearStaleActiveHandler()
+
         if (isBackgroundServiceRequest) {
             Log.d(TAG, "Background service request - continuing setup in background")
         }
@@ -118,6 +229,18 @@ class MainActivity : AppCompatActivity() {
         // startIglooBackgroundService()
 
         when (intent.action) {
+            "$packageName.UNLOCK_AND_SIGN" -> {
+                // Unlock request from InvisibleNIP55Handler when node is locked
+                Log.d(TAG, "Unlock and sign request - initializing WebView for unlock")
+                NIP55DebugLogger.logIntent("UNLOCK_AND_SIGN", intent, mapOf(
+                    "process" to "main",
+                    "launchMode" to intent.flags.toString()
+                ))
+                // Store the pending request - it will be processed after unlock
+                storePendingUnlockRequest(intent)
+                initializeSecureWebView()
+                loadSecurePWA()
+            }
             "$packageName.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request - showing native dialog")
@@ -140,8 +263,10 @@ class MainActivity : AppCompatActivity() {
                 val showPrompt = intent.getBooleanExtra("nip55_show_prompt", false)
                 if (!showPrompt) {
                     Log.d(TAG, "Fast signing detected - showing signing overlay")
-                    setupSigningOverlay()
-                    showSigningOverlay()
+                    if (::overlayManager.isInitialized) {
+                        overlayManager.setupSigningOverlay()
+                        overlayManager.showSigningOverlay()
+                    }
                 }
 
                 Log.d(TAG, "Direct Intent signing - initializing WebView and handling request")
@@ -155,13 +280,15 @@ class MainActivity : AppCompatActivity() {
                 if (isBackgroundSigningRequest) {
                     val signingType = intent.getStringExtra("signing_request_type") ?: "unknown"
                     val callingApp = intent.getStringExtra("signing_calling_app") ?: "unknown"
-                    Log.d(TAG, "Background signing startup - showing signing overlay (type=$signingType, app=$callingApp)")
+                    isColdStart = intent.getBooleanExtra("cold_start", false)
+                    Log.d(TAG, "Background signing startup - type=$signingType, app=$callingApp, coldStart=$isColdStart")
                     NIP55DebugLogger.logPWABridge("BACKGROUND_SIGNING_STARTUP", "initializePWA")
-                    setupSigningOverlay()
-                    showSigningOverlay()
+                    // Overlay will be setup after initializeSecureWebView()
                 } else {
                     NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
                     isNormalLaunch = true  // Mark as normal user launch for welcome dialog
+                    // Battery optimization check disabled - testing foreground service solution
+                    // checkBatteryOptimization()
                 }
                 initializeSecureWebView()
                 loadSecurePWA()
@@ -172,40 +299,6 @@ class MainActivity : AppCompatActivity() {
 
     // NOTE: IglooBackgroundService was removed (no background signing needed)
     // Background signing isn't possible anyway, so this service was deleted
-
-    /**
-     * Setup signing overlay (splash screen for fast signing)
-     */
-    private fun setupSigningOverlay() {
-        if (signingOverlay == null) {
-            val inflater = android.view.LayoutInflater.from(this)
-            signingOverlay = inflater.inflate(R.layout.signing_overlay, null)
-        }
-    }
-
-    /**
-     * Show signing overlay (hides PWA during fast signing)
-     */
-    private fun showSigningOverlay() {
-        signingOverlay?.let { overlay ->
-            if (overlay.parent == null) {
-                val rootView = window.decorView as android.view.ViewGroup
-                rootView.addView(overlay)
-                Log.d(TAG, "✓ Signing overlay shown")
-            }
-        }
-    }
-
-    /**
-     * Hide signing overlay (reveals PWA)
-     */
-    private fun hideSigningOverlay() {
-        signingOverlay?.let { overlay ->
-            val parent = overlay.parent as? android.view.ViewGroup
-            parent?.removeView(overlay)
-            Log.d(TAG, "✓ Signing overlay hidden")
-        }
-    }
 
     /**
      * Handle NIP-55 signing request from InvisibleNIP55Handler
@@ -348,15 +441,17 @@ class MainActivity : AppCompatActivity() {
         // Now we need to initialize WebView and execute the actual signing operation
 
         // Initialize WebView if not already done (permission dialog doesn't initialize it)
-        if (!::webView.isInitialized) {
+        if (webViewManager == null) {
             Log.d(TAG, "Initializing WebView for signing after permission approval")
             initializeSecureWebView()
             loadSecurePWA()
         }
 
         // Show signing overlay for the operation
-        setupSigningOverlay()
-        showSigningOverlay()
+        if (::overlayManager.isInitialized) {
+            overlayManager.setupSigningOverlay()
+            overlayManager.showSigningOverlay()
+        }
 
         // Execute the signing operation using existing flow
         // The Intent already contains all necessary request data from InvisibleNIP55Handler
@@ -375,9 +470,9 @@ class MainActivity : AppCompatActivity() {
             reason = "User denied permission"
         )
 
-        val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+        val delivered = IglooHealthManager.deliverResultByRequestId(requestId, result)
         if (delivered) {
-            Log.d(TAG, "✓ Permission denial delivered via registry")
+            Log.d(TAG, "✓ Permission denial delivered via health manager")
         } else {
             Log.w(TAG, "✗ No callback registered for request: $requestId")
         }
@@ -400,15 +495,152 @@ class MainActivity : AppCompatActivity() {
             reason = "User cancelled permission dialog"
         )
 
-        val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+        val delivered = IglooHealthManager.deliverResultByRequestId(requestId, result)
         if (delivered) {
-            Log.d(TAG, "✓ Permission cancellation delivered via registry")
+            Log.d(TAG, "✓ Permission cancellation delivered via health manager")
         } else {
             Log.w(TAG, "✗ No callback registered for request: $requestId")
         }
 
         // Return focus to the calling app (Amethyst) instead of just going to background
         returnFocusToCallingApp()
+    }
+
+    // ========== Unlock Request Handling ==========
+
+    /**
+     * Store a pending unlock request from InvisibleNIP55Handler.
+     * The request will be processed after the user unlocks the node.
+     */
+    private fun storePendingUnlockRequest(intent: Intent) {
+        val requestId = intent.getStringExtra("nip55_request_id")
+        val requestType = intent.getStringExtra("nip55_request_type")
+        val paramsJson = intent.getStringExtra("nip55_request_params") ?: "{}"
+        val callingApp = intent.getStringExtra("nip55_request_calling_app") ?: "unknown"
+
+        if (requestId == null || requestType == null) {
+            Log.e(TAG, "Invalid unlock request - missing required fields")
+            return
+        }
+
+        val params = try {
+            @Suppress("UNCHECKED_CAST")
+            gson.fromJson(paramsJson, Map::class.java) as? Map<String, String> ?: emptyMap()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse request params", e)
+            emptyMap()
+        }
+
+        pendingUnlockRequest = PendingUnlockRequest(
+            requestId = requestId,
+            requestType = requestType,
+            params = params,
+            callingApp = callingApp
+        )
+
+        Log.d(TAG, "Stored pending unlock request: type=$requestType, id=$requestId, caller=$callingApp")
+
+        // Start polling for unlock (check every second if bridge is ready)
+        startUnlockPolling()
+    }
+
+    /**
+     * Start polling to check if the bridge becomes ready (indicating node is unlocked)
+     */
+    private fun startUnlockPolling() {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val pollInterval = 1000L // 1 second
+        val maxPolls = 60 // 60 seconds max
+
+        var pollCount = 0
+
+        val pollRunnable = object : Runnable {
+            override fun run() {
+                pollCount++
+
+                if (pendingUnlockRequest == null) {
+                    Log.d(TAG, "Pending unlock request cancelled")
+                    return
+                }
+
+                if (pollCount > maxPolls) {
+                    Log.d(TAG, "Unlock polling timed out")
+                    val pending = pendingUnlockRequest
+                    if (pending != null) {
+                        IglooHealthManager.deliverResultByRequestId(pending.requestId, NIP55Result(
+                            ok = false,
+                            type = pending.requestType,
+                            id = pending.requestId,
+                            reason = "Unlock timeout - please try again"
+                        ))
+                        pendingUnlockRequest = null
+                    }
+                    return
+                }
+
+                // Check if WebView is ready and try to execute
+                val webView = webViewManager?.getWebView()
+                if (webView != null && isSigningReady) {
+                    Log.d(TAG, "Bridge appears ready - attempting to process pending unlock request")
+                    processPendingUnlockRequest()
+                    // Result is async - if still locked, pendingUnlockRequest will remain set
+                    // Keep polling in case still locked
+                    if (pendingUnlockRequest != null) {
+                        handler.postDelayed(this, pollInterval)
+                    }
+                } else {
+                    // Keep polling
+                    handler.postDelayed(this, pollInterval)
+                }
+            }
+        }
+
+        handler.postDelayed(pollRunnable, pollInterval)
+    }
+
+    /**
+     * Process the pending unlock request now that the node should be unlocked
+     * Returns true if processing completed (success or permanent failure),
+     * false if still locked (should keep polling)
+     */
+    private fun processPendingUnlockRequest(): Boolean {
+        val pending = pendingUnlockRequest ?: return true
+
+        Log.d(TAG, "Attempting to process pending unlock request: ${pending.requestType}")
+
+        // Create NIP55Request from pending data
+        val request = NIP55Request(
+            id = pending.requestId,
+            type = pending.requestType,
+            params = pending.params,
+            callingApp = pending.callingApp,
+            timestamp = System.currentTimeMillis()
+        )
+
+        // Use IglooHealthManager to execute the request
+        IglooHealthManager.submit(request) { result ->
+            Log.d(TAG, "Pending unlock request result: ok=${result.ok}, reason=${result.reason}")
+
+            // If still locked, don't deliver result yet - keep polling
+            if (!result.ok && result.reason?.contains("locked", ignoreCase = true) == true) {
+                Log.d(TAG, "Node still locked - will keep polling")
+                // Don't clear pendingUnlockRequest - keep polling
+                return@submit
+            }
+
+            // Clear pending request - we're done
+            pendingUnlockRequest = null
+
+            // Deliver the result via health manager (to original callback)
+            IglooHealthManager.deliverResultByRequestId(pending.requestId, result)
+
+            // Return focus to calling app if successful
+            if (result.ok) {
+                returnFocusToCallingApp()
+            }
+        }
+
+        return false // Result is async, return false to potentially keep polling
     }
 
     /**
@@ -455,6 +687,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Check if battery optimization is disabled for this app.
+     * If not, prompt the user to disable it to allow background signing.
+     */
+    private fun checkBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val packageName = packageName
+
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                Log.d(TAG, "Battery optimization is enabled - requesting exemption")
+
+                // Show dialog explaining why we need this
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+
+                try {
+                    startActivity(intent)
+                    Log.d(TAG, "Battery optimization exemption dialog shown")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to show battery optimization dialog: ${e.message}")
+                    // Fall back to opening battery settings manually
+                    try {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Failed to open battery settings: ${e2.message}")
+                    }
+                }
+            } else {
+                Log.d(TAG, "Battery optimization already disabled for this app")
+            }
+        }
+    }
+
+    /**
      * Return focus to the calling app after handling a permission request
      * This ensures we go back to Amethyst instead of the home screen
      */
@@ -495,7 +762,7 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Processing NIP-55 request: ${request.type}")
 
         // Initialize WebView and AsyncBridge if not already done
-        if (!::webView.isInitialized) {
+        if (webViewManager == null) {
             Log.d(TAG, "Initializing WebView for NIP-55 processing")
             initializeSecureWebView()
             loadSecurePWA()
@@ -506,13 +773,13 @@ class MainActivity : AppCompatActivity() {
             // Wait for PWA to be ready
             var waitCount = 0
             val maxWait = 30 // 30 seconds max wait
-            while (!isSecurePWALoaded && waitCount < maxWait) {
+            while (webViewManager?.isReady() != true && waitCount < maxWait) {
                 delay(1000)
                 waitCount++
                 Log.d(TAG, "Waiting for PWA to load... ($waitCount/$maxWait)")
             }
 
-            if (!isSecurePWALoaded) {
+            if (webViewManager?.isReady() != true) {
                 Log.e(TAG, "PWA failed to load within timeout")
                 NIP55DebugLogger.logError("PWA_LOAD_TIMEOUT", Exception("PWA not loaded after ${maxWait}s"))
                 sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
@@ -525,6 +792,16 @@ class MainActivity : AppCompatActivity() {
             // Use AsyncBridge for direct NIP-55 communication
             try {
                 Log.d(TAG, "Calling AsyncBridge for NIP-55 request: ${request.id}")
+
+                val asyncBridge = bridges?.asyncBridge
+                if (asyncBridge == null) {
+                    Log.e(TAG, "AsyncBridge not available")
+                    sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
+                        putExtra("error", "AsyncBridge not available")
+                        putExtra("id", request.id)
+                    })
+                    return@launch
+                }
 
                 // Call async bridge and await result
                 val result = asyncBridge.callNip55Async(request.type, request.id, request.callingApp, request.params)
@@ -574,169 +851,98 @@ class MainActivity : AppCompatActivity() {
 
 
     /**
-     * Initialize WebView with secure configuration and polyfill bridges
+     * Initialize WebView using Phase 4 infrastructure (WebViewManager, BridgeFactory)
      */
     private fun initializeSecureWebView() {
-        Log.d(TAG, "Initializing secure WebView...")
+        Log.d(TAG, "Initializing secure WebView via WebViewManager...")
 
         // Set content view to our layout with splash screen
         setContentView(R.layout.activity_main)
 
+        // Initialize overlay manager
+        overlayManager = UIOverlayManager(this)
+
         // Get references to views
         val webViewContainer = findViewById<android.widget.FrameLayout>(R.id.webview_container)
-        splashScreen = findViewById(R.id.splash_screen)
+        val splashScreen = findViewById<android.view.View>(R.id.splash_screen)
+        overlayManager.setSplashScreen(splashScreen)
+        overlayManager.showSplashScreen()
 
-        // Create and add WebView to container
-        webView = WebView(this)
+        // Check if we have a persistent WebViewManager from background signing
+        val existingManager = persistentWebViewManager
+        val existingWebView = persistentWebView
+
+        if (existingManager != null && existingWebView != null && isPersistentWebViewReady) {
+            Log.d(TAG, "Reusing persistent WebView from background signing")
+
+            // Reuse existing WebViewManager and WebView
+            webViewManager = existingManager
+
+            // Remove from old parent if still attached (shouldn't happen but be safe)
+            (existingWebView.parent as? android.view.ViewGroup)?.removeView(existingWebView)
+
+            // Re-attach WebView to container
+            webViewContainer.addView(existingWebView, android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+
+            // Mark as ready immediately since PWA is already loaded
+            isSigningReady = true
+
+            // Hide splash screen immediately
+            overlayManager.hideSplashScreen()
+            overlayManager.setupDebugButton()
+            overlayManager.showDebugButton()
+
+            Log.d(TAG, "Reattached persistent WebView - already ready for signing")
+            return
+        }
+
+        // No persistent WebView - create new one
+        Log.d(TAG, "Creating new WebView")
+
+        // Initialize AppContainer and WebViewManager
+        container = AppContainer.getInstance(this)
+        val factory = container.createBridgeFactory()
+
+        webViewManager = WebViewManager(
+            this,
+            factory,
+            BridgeFactory.BridgeContext.MAIN_ACTIVITY,
+            this
+        ).apply {
+            setReadyListener(this@MainActivity)
+        }
+
+        // Initialize WebView and add to container
+        val webView = webViewManager!!.initialize()
         webViewContainer.addView(webView, android.view.ViewGroup.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // Show splash screen initially
-        splashScreen?.visibility = android.view.View.VISIBLE
-        Log.d(TAG, "Splash screen displayed")
-
-        // Configure secure WebView settings
-        configureSecureWebView()
-
-        // Register secure bridges
-        registerSecureBridges()
-
-        // Set secure WebView client
-        webView.webViewClient = IglooWebViewClient(this)
-
-        // Set console logging client
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                val level = consoleMessage.messageLevel().name
-                val message = consoleMessage.message()
-                val source = consoleMessage.sourceId()
-                val line = consoleMessage.lineNumber()
-
-                val logMessage = "[SecurePWA-$level] $message ($source:$line)"
-
-                when (consoleMessage.messageLevel()) {
-                    ConsoleMessage.MessageLevel.ERROR -> Log.e(TAG, logMessage)
-                    ConsoleMessage.MessageLevel.WARNING -> Log.w(TAG, logMessage)
-                    ConsoleMessage.MessageLevel.DEBUG -> Log.d(TAG, logMessage)
-                    else -> Log.i(TAG, logMessage)
-                }
-                return true
-            }
-
-            override fun onProgressChanged(view: WebView, newProgress: Int) {
-                super.onProgressChanged(view, newProgress)
-                Log.d(TAG, "Secure PWA loading progress: $newProgress%")
-
-                if (newProgress == 100 && !isSecurePWALoaded) {
-                    Log.d(TAG, "Secure PWA fully loaded")
-                    isSecurePWALoaded = true
-                    onSecurePWAReady()
-                }
-            }
-        }
-
-        Log.d(TAG, "Secure WebView initialized successfully")
-    }
-
-    /**
-     * Configure WebView with secure settings
-     */
-    private fun configureSecureWebView() {
-        val webSettings = webView.settings
-
-        // Enable required features
-        webSettings.javaScriptEnabled = true
-        webSettings.domStorageEnabled = false // Disabled - we'll use our secure storage bridge
-
-        // Security settings
-        webSettings.allowFileAccess = true
-        webSettings.allowContentAccess = false
-        webSettings.allowFileAccessFromFileURLs = false
-        webSettings.allowUniversalAccessFromFileURLs = false
-        webSettings.blockNetworkLoads = false // We'll handle blocking in WebViewClient
-
-        // Disable built-in storage (we'll use our secure bridges)
-        webSettings.databaseEnabled = false
-        webSettings.cacheMode = WebSettings.LOAD_NO_CACHE
-
-        // Performance settings (renderPriority deprecated)
-        // webSettings.renderPriority = WebSettings.RenderPriority.HIGH
+        // Register activity-specific NodeStateBridge with WebView provider for persistence
+        val nodeStateBridge = NodeStateBridge(this) { webViewManager?.getWebView() }
+        webView.addJavascriptInterface(nodeStateBridge, "NodeStateBridge")
+        Log.d(TAG, "Node State Bridge registered")
 
         // Enable debugging in development
-        if (true) { // BuildConfig.DEBUG replacement
-            WebView.setWebContentsDebuggingEnabled(true)
-            Log.d(TAG, "WebView debugging enabled for development")
-        }
+        WebView.setWebContentsDebuggingEnabled(true)
+        Log.d(TAG, "WebView debugging enabled for development")
 
-        Log.d(TAG, "Secure WebView settings configured")
-    }
-
-    /**
-     * Register secure bridges for polyfill functionality
-     */
-    private fun registerSecureBridges() {
-        Log.d(TAG, "Registering secure bridges...")
-
-        // Initialize AsyncBridge for NIP-55 communication
-        asyncBridge = AsyncBridge(webView)
-        asyncBridge.initialize()
-        Log.d(TAG, "AsyncBridge initialized")
-
-        // WebSocket bridge
-        webSocketBridge = WebSocketBridge(webView)
-        webView.addJavascriptInterface(webSocketBridge, "WebSocketBridge")
-        Log.d(TAG, "WebSocket bridge registered")
-
-        // Storage bridge
-        storageBridge = StorageBridge(this)
-        webView.addJavascriptInterface(storageBridge, "StorageBridge")
-        Log.d(TAG, "Storage bridge registered")
-
-        // Restore session storage from backup if available
-        if (storageBridge.restoreSessionStorage()) {
-            Log.d(TAG, "Session storage restored from backup")
-        } else {
-            Log.d(TAG, "No session storage backup to restore")
-        }
-
-        // QR Scanner bridge - native Android QR scanning
-        qrScannerBridge = QRScannerBridge(this, webView)
-        webView.addJavascriptInterface(qrScannerBridge, "QRScannerBridge")
-        Log.d(TAG, "QR Scanner bridge registered")
-
-        // Initialize signing system - simplified forwarding mode
-        signingService = UnifiedSigningService(this, webView)
-
-        // Unified Signing bridge
-        signingBridge = UnifiedSigningBridge(this, webView)
-        signingBridge.initialize(signingService)
-        webView.addJavascriptInterface(signingBridge, "UnifiedSigningBridge")
-        Log.d(TAG, "Unified Signing bridge registered")
-
-        // NIP-55 Result Bridge for large result handling (bypasses evaluateJavascript size limits)
-        val nip55ResultBridge = NIP55ContentProvider.getSharedResultBridge()
-        webView.addJavascriptInterface(nip55ResultBridge, "Android_NIP55ResultBridge")
-        Log.d(TAG, "NIP-55 Result Bridge registered")
-
-        // IPC server removed - using direct Intent-based communication
-        Log.d(TAG, "Direct Intent-based communication enabled")
-
-        Log.d(TAG, "All secure bridges registered successfully")
+        Log.d(TAG, "Secure WebView initialized successfully via WebViewManager")
     }
 
     /**
      * Load the secure PWA from bundled assets
      */
     private fun loadSecurePWA() {
-        // Load from bundled assets using custom protocol
-        Log.d(TAG, "Loading PWA from bundled assets: $SECURE_PWA_URL")
+        Log.d(TAG, "Loading PWA via WebViewManager...")
 
         try {
-            webView.loadUrl(SECURE_PWA_URL)
+            webViewManager?.loadPWA()
             Log.d(TAG, "Bundled PWA load initiated")
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load bundled PWA", e)
             loadErrorPage("Failed to load PWA: ${e.message}")
@@ -770,6 +976,38 @@ class MainActivity : AppCompatActivity() {
 
 
 
+    // ==================== WebViewReadyListener Implementation ====================
+
+    /**
+     * Called when the PWA has fully loaded (from WebViewManager)
+     */
+    override fun onWebViewReady() {
+        Log.d(TAG, "WebViewManager: PWA ready")
+        onSecurePWAReady()
+    }
+
+    /**
+     * Called when loading progress changes (from WebViewManager)
+     */
+    override fun onWebViewLoadProgress(progress: Int) {
+        Log.d(TAG, "Secure PWA loading progress: $progress%")
+    }
+
+    /**
+     * Called for console messages from the PWA (from WebViewManager)
+     */
+    override fun onConsoleMessage(level: String, message: String, source: String, line: Int) {
+        val logMessage = "[SecurePWA-$level] $message ($source:$line)"
+        when (level) {
+            "ERROR" -> Log.e(TAG, logMessage)
+            "WARNING" -> Log.w(TAG, logMessage)
+            "DEBUG" -> Log.d(TAG, logMessage)
+            else -> Log.i(TAG, logMessage)
+        }
+    }
+
+    // ==================== PWA Ready Logic ====================
+
     /**
      * Called when secure PWA is ready
      */
@@ -779,6 +1017,21 @@ class MainActivity : AppCompatActivity() {
         // Direct Intent-based communication ready
         isSigningReady = true
         Log.i(TAG, "Direct Intent-based NIP-55 communication ready")
+
+        // Set up IglooHealthManager executor to use our AsyncBridge
+        setupHealthManagerExecutor()
+
+        // Handle nip55_wakeup intent - try to process ONE request from queue
+        // Health will be marked true only when a request succeeds
+        if (intent?.getBooleanExtra("nip55_wakeup", false) == true) {
+            Log.d(TAG, "nip55_wakeup intent detected - trying to process queue")
+            IglooHealthManager.tryProcessOneFromQueue {
+                // Callback invoked when bootstrap signing completes (or queue empty)
+                Log.d(TAG, "Bootstrap complete - moving to background")
+                moveTaskToBack(true)
+            }
+        }
+        // Note: Health starts false and only becomes true after successful signing
 
         // Inject any additional setup JavaScript
         val setupScript = """
@@ -803,12 +1056,16 @@ class MainActivity : AppCompatActivity() {
             console.log('SecurePWA: External signing bridge ready');
         """.trimIndent()
 
-        webView.evaluateJavascript(setupScript) { result ->
+        webViewManager?.getWebView()?.evaluateJavascript(setupScript) { result ->
             Log.d(TAG, "PWA setup script result: $result")
         }
 
-        // Hide splash screen with fade animation
-        hideSplashScreen()
+        // Hide splash screen with fade animation and show debug button
+        if (::overlayManager.isInitialized) {
+            overlayManager.hideSplashScreen()
+            overlayManager.setupDebugButton()
+            overlayManager.showDebugButton()
+        }
 
         // Show welcome dialog on first normal launch
         if (isNormalLaunch) {
@@ -817,10 +1074,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Set up the IglooHealthManager's request executor to use our AsyncBridge.
+     * This allows the health manager to execute signing requests.
+     */
+    private fun setupHealthManagerExecutor() {
+        IglooHealthManager.requestExecutor = object : IglooHealthManager.RequestExecutor {
+            override suspend fun execute(request: NIP55Request): NIP55Result {
+                val asyncBridge = bridges?.asyncBridge
+                if (asyncBridge == null) {
+                    Log.e(TAG, "AsyncBridge not available for IglooHealthManager")
+                    return NIP55Result(
+                        ok = false,
+                        type = request.type,
+                        id = request.id,
+                        reason = "AsyncBridge not available"
+                    )
+                }
+
+                return try {
+                    Log.d(TAG, "IglooHealthManager executing request: ${request.type} (${request.id})")
+                    asyncBridge.callNip55Async(
+                        request.type,
+                        request.id,
+                        request.callingApp,
+                        request.params.mapValues { it.value as Any }
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "IglooHealthManager request failed", e)
+                    NIP55Result(
+                        ok = false,
+                        type = request.type,
+                        id = request.id,
+                        reason = e.message ?: "Execution failed"
+                    )
+                }
+            }
+        }
+        Log.d(TAG, "IglooHealthManager executor configured")
+    }
+
+    /**
      * Show welcome dialog if the user hasn't dismissed it permanently
      */
     private fun showWelcomeDialogIfNeeded() {
         try {
+            val storageBridge = bridges?.storageBridge ?: return
             if (WelcomeDialog.shouldShow(storageBridge)) {
                 Log.d(TAG, "Showing welcome dialog")
                 val dialog = WelcomeDialog.newInstance()
@@ -830,23 +1128,6 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show welcome dialog", e)
-        }
-    }
-
-    /**
-     * Hide the splash screen with a smooth fade-out animation
-     */
-    private fun hideSplashScreen() {
-        splashScreen?.let { splash ->
-            Log.d(TAG, "Hiding splash screen with fade animation")
-            splash.animate()
-                .alpha(0f)
-                .setDuration(300)
-                .withEndAction {
-                    splash.visibility = android.view.View.GONE
-                    Log.d(TAG, "Splash screen hidden")
-                }
-                .start()
         }
     }
 
@@ -876,8 +1157,8 @@ class MainActivity : AppCompatActivity() {
             </html>
         """.trimIndent()
 
-        webView.loadDataWithBaseURL(
-            SECURE_PWA_URL,
+        webViewManager?.getWebView()?.loadDataWithBaseURL(
+            "igloo://app/error.html",
             errorHtml,
             "text/html",
             "UTF-8",
@@ -897,7 +1178,28 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Background service request detected in onNewIntent - processing in background")
         }
 
+        // Handle nip55_wakeup intent - try to process ONE request from queue
+        if (intent.getBooleanExtra("nip55_wakeup", false)) {
+            Log.d(TAG, "nip55_wakeup intent received in onNewIntent - trying to process queue")
+            IglooHealthManager.tryProcessOneFromQueue {
+                // Callback invoked when bootstrap signing completes (or queue empty)
+                Log.d(TAG, "Bootstrap complete (onNewIntent) - moving to background")
+                moveTaskToBack(true)
+            }
+            return
+        }
+
         when (intent.action) {
+            "$packageName.UNLOCK_AND_SIGN" -> {
+                // Unlock request from InvisibleNIP55Handler when node is locked
+                Log.d(TAG, "Unlock and sign request in onNewIntent")
+                NIP55DebugLogger.logIntent("UNLOCK_AND_SIGN_NEW", intent, mapOf(
+                    "process" to "main",
+                    "launchMode" to intent.flags.toString()
+                ))
+                storePendingUnlockRequest(intent)
+                // WebView should already be initialized, just wait for unlock
+            }
             "$packageName.SHOW_PERMISSION_DIALOG" -> {
                 // Permission dialog request from InvisibleNIP55Handler
                 Log.d(TAG, "Permission dialog request in onNewIntent - showing native dialog")
@@ -920,8 +1222,10 @@ class MainActivity : AppCompatActivity() {
                 val showPrompt = intent.getBooleanExtra("nip55_show_prompt", false)
                 if (!showPrompt) {
                     Log.d(TAG, "Fast signing detected in onNewIntent - showing signing overlay")
-                    setupSigningOverlay()
-                    showSigningOverlay()
+                    if (::overlayManager.isInitialized) {
+                        overlayManager.setupSigningOverlay()
+                        overlayManager.showSigningOverlay()
+                    }
                 }
 
                 handleNIP55Request()
@@ -933,8 +1237,10 @@ class MainActivity : AppCompatActivity() {
                     val signingType = intent.getStringExtra("signing_request_type") ?: "unknown"
                     val callingApp = intent.getStringExtra("signing_calling_app") ?: "unknown"
                     Log.d(TAG, "Background signing in onNewIntent - showing signing overlay (type=$signingType, app=$callingApp)")
-                    setupSigningOverlay()
-                    showSigningOverlay()
+                    if (::overlayManager.isInitialized) {
+                        overlayManager.setupSigningOverlay()
+                        overlayManager.showSigningOverlay()
+                    }
                 }
                 handleIntent(intent)
             }
@@ -942,8 +1248,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        if (::webView.isInitialized && webView.canGoBack()) {
+        val webView = webViewManager?.getWebView()
+        if (webView != null && webView.canGoBack()) {
             webView.goBack()
+        } else if (IglooHealthManager.isHealthy) {
+            // System is healthy - move to background instead of finishing
+            // This keeps the WebView alive for background signing
+            Log.d(TAG, "System healthy - moving to background instead of finishing")
+            moveTaskToBack(true)
         } else {
             super.onBackPressed()
         }
@@ -953,52 +1265,55 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         // Forward to QR scanner bridge
-        if (::qrScannerBridge.isInitialized) {
-            qrScannerBridge.handleActivityResult(requestCode, resultCode, data)
-        }
+        bridges?.qrScannerBridge?.handleActivityResult(requestCode, resultCode, data)
     }
 
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onResume ===")
 
+        // Reset health timeout when activity resumes (user is interacting)
+        if (IglooHealthManager.isHealthy) {
+            IglooHealthManager.resetHealthTimeout()
+        }
+
+        // Detect if this is a manual user switch (not a NIP-55 intent)
+        // If the intent doesn't have NIP-55 action markers, user manually switched to Igloo
+        val isNIP55Intent = intent?.action?.contains("NIP55") == true ||
+                            intent?.action?.contains("PERMISSION_DIALOG") == true ||
+                            intent?.getBooleanExtra("background_signing_request", false) == true ||
+                            intent?.getBooleanExtra("background_service_request", false) == true ||
+                            intent?.getBooleanExtra("nip55_wakeup", false) == true
+
+        if (!isNIP55Intent) {
+            // User manually switched to Igloo - set the active flag
+            setUserActive(true)
+            Log.d(TAG, "User manually brought Igloo to foreground")
+        } else {
+            Log.d(TAG, "Resumed via NIP-55 intent, not setting user active")
+        }
+
         // Dismiss any open keyboard immediately when coming to foreground
         // This ensures keyboard from other apps (like Amethyst) doesn't block our UI
         dismissKeyboard()
 
-        if (::webView.isInitialized) {
-            webView.onResume()
-            // Don't call resumeTimers() since we never pause them
-            // This allows JavaScript to continue running in background for signing
-        }
-
-        // Register as listener for NIP-55 requests from InvisibleNIP55Handler
-        NIP55RequestBridge.registerListener(object : NIP55RequestBridge.RequestListener {
-            override fun onNIP55Request(request: NIP55Request) {
-                Log.d(TAG, "Received NIP-55 request via bridge: ${request.type} (${request.id})")
-                // Process the request (same as if it came via Intent)
-                processNIP55Request(request, request.callingApp, null)
-            }
-        })
+        webViewManager?.getWebView()?.onResume()
+        // Don't call resumeTimers() since we never pause them
+        // This allows JavaScript to continue running in background for signing
     }
 
     override fun onPause() {
         super.onPause()
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onPause ===")
 
-        // DON'T unregister bridge listener - keep it active for background signing
-        // NIP55RequestBridge.unregisterListener()
+        // Clear user active flag - user is leaving Igloo
+        setUserActive(false)
 
         // Backup session storage before app may be terminated
-        if (::storageBridge.isInitialized) {
-            storageBridge.backupSessionStorage()
-        }
+        bridges?.storageBridge?.backupSessionStorage()
 
         // DON'T call webView.onPause() - this can pause JavaScript execution
         // We need JavaScript to keep running for background signing
-        // if (::webView.isInitialized) {
-        //     webView.onPause()
-        // }
     }
 
     override fun onDestroy() {
@@ -1010,33 +1325,27 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Cleared active MainActivity instance")
         }
 
-        // Clean up WebSocket bridge
-        if (::webSocketBridge.isInitialized) {
-            webSocketBridge.cleanup()
-        }
+        // When system is healthy, DON'T destroy the WebView - preserve it for reattachment
+        // Android may destroy the activity for memory, but we keep WebView alive in static holder
+        if (IglooHealthManager.isHealthy) {
+            Log.w(TAG, "MainActivity destroyed while healthy - preserving WebView for reattachment")
 
-        // Clean up session storage (as per Web Storage API behavior)
-        if (::storageBridge.isInitialized) {
-            storageBridge.clearSessionStorage()
-        }
+            // Detach WebView from this activity's layout but keep reference
+            webViewManager?.getWebView()?.let { wv ->
+                (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+                Log.d(TAG, "WebView detached from activity layout (preserved in static holder)")
+            }
 
-        // Clean up QR scanner bridge
-        if (::qrScannerBridge.isInitialized) {
-            qrScannerBridge.cleanup()
+            // DON'T clear persistentWebView or persistentWebViewManager - keep them alive
+            // Just clear the instance-specific manager reference
+            webViewManager = null
+        } else {
+            // System not healthy - clean up everything
+            Log.d(TAG, "System not healthy - cleaning up WebView resources")
+            clearPersistentWebView()
+            webViewManager?.cleanup()
+            webViewManager = null
         }
-
-        // Clean up signing bridge
-        if (::signingBridge.isInitialized) {
-            signingBridge.cleanup()
-        }
-
-        // Clean up signing service
-        if (::signingService.isInitialized) {
-            signingService.cleanup()
-        }
-
-        // IPC server removed - using direct Intent-based communication
-        Log.d(TAG, "Direct Intent-based communication cleanup")
 
         // Cancel activity scope
         activityScope.cancel()
@@ -1045,7 +1354,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Send reply via PendingNIP55ResultRegistry (cross-task safe)
+     * Send reply via IglooHealthManager (cross-task safe)
      */
     private fun sendReply(replyPendingIntent: PendingIntent?, resultCode: Int, resultData: Intent) {
         // Get request ID to identify which callback to invoke
@@ -1071,13 +1380,15 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-            Log.d(TAG, "Delivering result to registry for request: $requestId (ok=${result.ok})")
+            Log.d(TAG, "Delivering result to health manager for request: $requestId (ok=${result.ok})")
 
-            // Deliver result via registry (works across task boundaries)
-            val delivered = PendingNIP55ResultRegistry.deliverResult(requestId, result)
+            // Deliver result via health manager (works across task boundaries)
+            val delivered = IglooHealthManager.deliverResultByRequestId(requestId, result)
 
             if (delivered) {
-                Log.d(TAG, "✓ Result delivered successfully via registry")
+                Log.d(TAG, "✓ Result delivered successfully via health manager")
+                // Reset health timeout after successful signing
+                IglooHealthManager.resetHealthTimeout()
             } else {
                 Log.w(TAG, "✗ No callback registered for request: $requestId")
             }
@@ -1086,7 +1397,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Hide signing overlay before returning to calling app
-        hideSigningOverlay()
+        if (::overlayManager.isInitialized) {
+            overlayManager.hideSigningOverlay()
+        }
 
         // Return focus to the calling app (Amethyst) instead of just going to background
         returnFocusToCallingApp()
