@@ -65,6 +65,12 @@
 -keep class com.frostr.igloo.NIP55PermissionDialog$PermissionStorage { *; }
 -keep class com.frostr.igloo.NIP55PermissionDialog$Permission { *; }
 
+# Keep PermissionChecker data classes for Gson deserialization
+-keep class com.frostr.igloo.services.PermissionStorage { *; }
+-keep class com.frostr.igloo.services.StoredPermission { *; }
+-keep class com.frostr.igloo.services.PermissionResult { *; }
+-keep class com.frostr.igloo.services.PermissionResult$* { *; }
+
 # Gson specific rules
 -keepattributes Signature
 -keepattributes *Annotation*
