@@ -1,463 +1,478 @@
-# NIP-55 Pipeline Architecture
+# Igloo Architecture
 
-This document provides a comprehensive overview of the Igloo NIP-55 signing pipeline architecture.
+This document provides a comprehensive overview of the Igloo application architecture.
+
+---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Architecture Diagram](#architecture-diagram)
-3. [Request Flows](#request-flows)
-4. [Implemented Features](#implemented-features)
-5. [Key Components](#key-components)
-6. [File Reference](#file-reference)
+2. [High-Level Architecture](#high-level-architecture)
+3. [Android Layer](#android-layer)
+4. [PWA Layer](#pwa-layer)
+5. [FROSTR/Bifrost Integration](#frostrbifrost-integration)
+6. [NIP-55 Signing Pipeline](#nip-55-signing-pipeline)
+7. [Security Architecture](#security-architecture)
+8. [Build System](#build-system)
 
 ---
 
 ## Overview
 
-The Igloo NIP-55 pipeline handles cryptographic signing requests from external Nostr apps (like Amethyst) through a sophisticated multi-process, multi-layer architecture. The system supports two parallel request flows:
+**Igloo** is a FROST-based signing device for the Nostr protocol. It enables threshold signing where multiple key shares are required to produce a valid signature, providing enhanced security compared to single-key signing.
 
-1. **Intent-based flow** - Explicit user interaction via `nostrsigner:` URIs
-2. **ContentProvider flow** - Background signing for pre-approved operations
+### Key Capabilities
 
-Both flows converge at the PWA layer where the Bifrost node performs actual cryptographic operations.
+| Feature | Description |
+|---------|-------------|
+| **NIP-55 Signing** | Handles `nostrsigner:` URI requests from Nostr apps |
+| **FROSTR Integration** | Connects to FROSTR network via bifrost node |
+| **Permission Management** | Granular control over which apps can sign which event kinds |
+| **Encryption** | NIP-04 (AES-CBC) and NIP-44 (ChaCha20-Poly1305) support |
+| **QR Code Setup** | Scan FROSTR share to configure quickly |
+
+### Design Philosophy
+
+Igloo is built as a **PWA wrapped in an Android shell**. This approach:
+- Enables cryptographic operations in JavaScript (portable across platforms)
+- Provides native Android capabilities via polyfill bridges
+- Allows the PWA to run standalone in a web browser for testing
+
+---
+
+## High-Level Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                                ANDROID SHELL                                  │
+│                                                                               │
+│    ┌────────────────────────────────────────────────────────────────────┐     │
+│    │                          MainActivity.kt                           │     │
+│    │  ┌──────────────────────────────────────────────────────────────┐  │     │
+│    │  │                        Secure WebView                        │  │     │
+│    │  │                                                              │  │     │
+│    │  │  ┌────────────────────────────────────────────────────────┐  │  │     │
+│    │  │  │                       React PWA                        │  │  │     │
+│    │  │  │                                                        │  │  │     │
+│    │  │  │   ┌─────────────┐  ┌─────────────┐  ┌──────────────┐   │  │  │     │
+│    │  │  │   │  Dashboard  │  │  Settings   │  │ Permissions  │   │  │  │     │
+│    │  │  │   │    Tab      │  │    Tab      │  │     Tab      │   │  │  │     │
+│    │  │  │   └─────────────┘  └─────────────┘  └──────────────┘   │  │  │     │
+│    │  │  │                                                        │  │  │     │
+│    │  │  │   ┌────────────────────────────────────────────────┐   │  │  │     │
+│    │  │  │   │            Bifrost Node                        │   │  │  │     │
+│    │  │  │   │   (FROSTR threshold signing via WebSocket)     │   │  │  │     │
+│    │  │  │   └────────────────────────────────────────────────┘   │  │  │     │
+│    │  │  │                                                        │  │  │     │
+│    │  │  └────────────────────────────────────────────────────────┘  │  │     │
+│    │  │                              │                               │  │     │
+│    │  │                       Polyfill Bridges                       │  │     │
+│    │  │                              │                               │  │     │
+│    │  └──────────────────────────────┼───────────────────────────────┘  │     │
+│    └─────────────────────────────────┼──────────────────────────────────┘     │
+│                                      │                                        │
+│  ┌───────────────────────────────────┼─────────────────────────────────────┐  │
+│  │                             Native Bridges                              │  │
+│  │                                                                         │  │
+│  │  ┌───────────────┐  ┌─────────────────┐  ┌──────────────┐  ┌─────────┐  │  │
+│  │  │ StorageBridge │  │ WebSocketBridge │  │ CameraBridge │  │  NIP-55 │  │  │
+│  │  │   (AES-GCM)   │  │   (OkHttp)      │  │  (CameraX)   │  │ Handler │  │  │
+│  │  └───────────────┘  └─────────────────┘  └──────────────┘  └─────────┘  │  │
+│  │                                                                         │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Layer Responsibilities
+
+| Layer | Technology | Responsibility |
+|-------|------------|----------------|
+| **Android Shell** | Kotlin | WebView hosting, native bridges, NIP-55 intents |
+| **PWA** | React/TypeScript | UI, state management, cryptographic operations |
+| **Bifrost Node** | JavaScript | FROSTR protocol, threshold signing |
+
+---
+
+## Android Layer
+
+### Package Structure
+
+```
+android/app/src/main/kotlin/com/frostr/igloo/
+├── MainActivity.kt              # WebView host, bridge registration
+├── InvisibleNIP55Handler.kt     # NIP-55 intent entry point
+├── NIP55ContentProvider.kt      # Background signing entry point
+├── bridges/                     # Native polyfill bridges
+│   ├── AsyncBridge.kt           # Async IPC for NIP-55
+│   ├── StorageBridge.kt         # Encrypted localStorage
+│   ├── WebSocketBridge.kt       # Persistent WebSocket
+│   ├── ModernCameraBridge.kt    # QR scanning
+│   └── NodeStateBridge.kt       # Bifrost state sync
+├── health/
+│   └── IglooHealthManager.kt    # WebView health state
+├── services/
+│   ├── NIP55HandlerService.kt   # Handler protection service
+│   └── PermissionChecker.kt     # Permission validation
+├── nip55/                       # NIP-55 models
+├── util/                        # Utilities
+├── webview/                     # WebView management
+└── debug/                       # Tracing and metrics
+```
+
+### Polyfill Bridge System
+
+The PWA runs in WebView where certain web APIs don't work reliably. Android polyfill bridges transparently replace these APIs:
+
+| Bridge | Web API Replaced | Native Implementation |
+|--------|------------------|----------------------|
+| **StorageBridge** | `localStorage` | EncryptedSharedPreferences (AES256-GCM) |
+| **WebSocketBridge** | `WebSocket` | OkHttp 4.12.0 (survives app backgrounding) |
+| **ModernCameraBridge** | `navigator.mediaDevices` | CameraX 1.4.0 |
+
+**How Polyfills Work:**
+
+```
+PWA Code (unchanged)                    Android Bridge
+─────────────────────                   ──────────────────
+localStorage.setItem('key', 'value')  → StorageBridge.setItem()
+                                        → EncryptedSharedPreferences
+                                        → AES256-GCM encryption
+                                        → Disk storage
+```
+
+JavaScript polyfill files in `android/app/src/main/assets/polyfills/` intercept standard APIs and redirect to native bridges.
+
+### MainActivity
+
+The central WebView host:
+
+```kotlin
+class MainActivity : AppCompatActivity() {
+    // WebView lifecycle
+    fun onCreate() {
+        setupWebView()
+        registerBridges()
+        loadPWA()
+    }
+
+    // Called when PWA signals ready
+    fun onSecurePWAReady() {
+        IglooHealthManager.markHealthy()
+    }
+
+    // Bridge registration
+    fun registerBridges() {
+        AsyncBridge(webView)
+        StorageBridge(webView)
+        WebSocketBridge(webView)
+        ModernCameraBridge(webView)
+        NodeStateBridge(webView)
+    }
+}
+```
 
 ### Process Isolation
 
-The architecture uses Android process isolation for security:
-
 | Process | Components | Purpose |
 |---------|------------|---------|
-| `:native_handler` | InvisibleNIP55Handler | Lightweight intent validation, permission checking |
+| `:native_handler` | InvisibleNIP55Handler | Lightweight intent validation |
 | `:main` | MainActivity, PWA, Bridges | WebView hosting, cryptographic signing |
 
 ---
 
-## Architecture Diagram
+## PWA Layer
+
+### Source Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                              EXTERNAL NOSTR APPLICATIONS                            │
-│                        (Amethyst, Coracle, Damus, etc.)                             │
-└──────────────────────────────────┬──────────────────────────────────────────────────┘
-                                   │
-           ┌───────────────────────┴───────────────────────┐
-           │                                               │
-           ▼                                               ▼
-┌─────────────────────────┐                 ┌─────────────────────────────┐
-│   Intent-Based Flow     │                 │   ContentProvider Flow      │
-│   nostrsigner: URI      │                 │   contentResolver.query()   │
-└───────────┬─────────────┘                 └─────────────┬───────────────┘
-            │                                             │
-            ▼                                             ▼
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                              :native_handler process                                │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │                        InvisibleNIP55Handler.kt                               │  │
-│  │  ┌──────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐   │  │
-│  │  │ parseNIP55Request│→ │ Deduplication   │→ │ checkPermission()           │   │  │
-│  │  │ (extract params) │  │ (NIP55Dedup-    │  │ • allowed → fast signing    │   │  │
-│  │  │                  │  │  licator)       │  │ • denied → return error     │   │  │
-│  │  └──────────────────┘  └─────────────────┘  │ • prompt_required → dialog  │   │  │
-│  │                                             └───────────────┬─────────────┘   │  │
-│  │  ┌──────────────────────────────────────────────────────────┼───────────────┐ │  │
-│  │  │                       Request Queuing                    │               │ │  │
-│  │  │  pendingRequests: MutableList<NIP55Request>              │               │ │  │
-│  │  │  Batch return after 150ms delay                          │               │ │  │
-│  │  └──────────────────────────────────────────────────────────┼───────────────┘ │  │
-│  └─────────────────────────────────────────────────────────────┼─────────────────┘  │
-└────────────────────────────────────────────────────────────────┼────────────────────┘
-                                                                 │
-                    ┌────────────────────────────────────────────┤
-                    │                                            │
-                    ▼                                            ▼
-┌──────────────────────────────────┐              ┌──────────────────────────────────┐
-│      NIP55RequestBridge.kt       │              │       Permission Dialog          │
-│   (Cross-task request queue)     │              │   (NIP55PermissionDialog.kt)     │
-│   • Queues when MainActivity     │              │   • Single or bulk permission    │
-│     not available                │              │   • User approval/denial         │
-│   • Singleton pattern            │              │   • Persists to secure storage   │
-└────────────────┬─────────────────┘              └──────────────────────────────────┘
-                 │
-                 ▼
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                                   :main process                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                              MainActivity.kt                                   │  │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │                          Secure WebView                                  │  │  │
-│  │  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────────────┐  │  │  │
-│  │  │  │  PWA (React)    │  │  Polyfill       │  │  Bridge Registration     │  │  │  │
-│  │  │  │  dist/app.js    │  │  Bridges        │  │  • AsyncBridge           │  │  │  │
-│  │  │  │                 │  │  • WebSocket    │  │  • WebSocketBridge       │  │  │  │
-│  │  │  │                 │  │  • Storage      │  │  • StorageBridge         │  │  │  │
-│  │  │  │                 │  │  • Camera       │  │  • NodeStateBridge       │  │  │  │
-│  │  │  └─────────────────┘  └─────────────────┘  └──────────────────────────┘  │  │  │
-│  │  └──────────────────────────────────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                         NIP55ContentProvider.kt                                │  │
-│  │  • Wake lock management (reference counted)                                    │  │
-│  │  • Stale detection (30s threshold)                                             │  │
-│  │  • Result caching (5s TTL)                                                     │  │
-│  │  • Direct WebView JavaScript execution                                         │  │
-│  └────────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┬───────────────────────┘
-                                                               │
-                                                               ▼
-┌───────────────────────────────────────────────────────────────────────────────────────┐
-│                              AsyncBridge.kt (IPC Layer)                               │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
-│  │  WebMessageListener-based async/await pattern                                   │  │
-│  │  • callNip55Async() → suspendCancellableCoroutine                               │  │
-│  │  • 30s timeout per operation                                                    │  │
-│  │  • JavaScript code injection via evaluateJavascript()                           │  │
-│  │  • Result via window.androidBridge.postMessage()                                │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┬────────────────────────┘
-                                                               │
-                                                               ▼
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                                 PWA JavaScript Layer                                │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │  window.nostr.nip55(request) → executeAutoSigning()                           │  │
-│  │                                                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │                    SigningBatchQueue (src/lib/batch-signer.ts)          │  │  │
-│  │  │  • Deduplication by event ID (not request ID)                           │  │  │
-│  │  │  • Result caching (5s TTL)                                              │  │  │
-│  │  │  • Max queue size: 10 unique events                                     │  │  │
-│  │  │  • Batch delay: 50ms for request coalescing                             │  │  │
-│  │  │  • Single batch in flight at a time                                     │  │  │
-│  │  │  • Auto-reconnection after 2 consecutive failures                       │  │  │
-│  │  └─────────────────────────────────────────────────────────────────────────┘  │  │
-│  │                                      │                                        │  │
-│  │                                      ▼                                        │  │
-│  │  ┌─────────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │                    BifrostSignDevice (src/class/signer.ts)              │  │  │
-│  │  │  • sign_event() → Bifrost node signing                                  │  │  │
-│  │  │  • nip04_encrypt/decrypt() → ECDH + AES-CBC                             │  │  │
-│  │  │  • nip44_encrypt/decrypt() → ECDH + ChaCha20-Poly1305                   │  │  │
-│  │  │  • get_pubkey() → Group public key                                      │  │  │
-│  │  └─────────────────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┬──────────────────────┘
-                                                               │
-                                                               ▼
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                              Bifrost Node (P2P Network)                             │
-│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │  FROSTR distributed key management                                            │  │
-│  │  • Peer-to-peer signing protocol                                              │  │
-│  │  • Threshold signatures                                                       │  │
-│  │  • WebSocket connections to Nostr relays                                      │  │
-│  └───────────────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+src/
+├── index.tsx                    # Entry point, provider hierarchy
+├── components/
+│   ├── app.tsx                  # Root component with tab navigation
+│   ├── dash/                    # Dashboard tab components
+│   │   ├── console.tsx          # Debug console
+│   │   ├── node.tsx             # Node status display
+│   │   └── peers.tsx            # Peer status
+│   ├── settings/                # Settings tab components
+│   │   ├── group.tsx            # Group configuration
+│   │   ├── peers.tsx            # Peer management
+│   │   ├── relays.tsx           # Relay configuration
+│   │   └── share.tsx            # Share display/QR
+│   ├── permissions/             # Permissions tab
+│   └── layout/                  # Header, tabs
+├── context/                     # React Context providers
+│   ├── settings.tsx             # App configuration
+│   ├── node.tsx                 # Bifrost node lifecycle
+│   ├── permissions.tsx          # NIP-55 permissions
+│   └── console.tsx              # Debug logging
+├── hooks/
+│   └── useBifrost.ts            # Bifrost node management
+├── lib/                         # Core libraries
+│   ├── signer.ts                # Auto-signing execution
+│   ├── cipher.ts                # NIP-04/NIP-44 encryption
+│   ├── permissions.ts           # Permission storage
+│   └── util.ts                  # Utilities
+├── class/
+│   ├── signer.ts                # BifrostSignDevice wrapper
+│   └── store.ts                 # Reactive store controller
+└── types/                       # TypeScript definitions
 ```
 
----
+### React Provider Hierarchy
 
-## Request Flows
-
-### 1. Fast Signing Flow (Permission Pre-Granted)
-
-This is the optimal path when the calling app already has permission to sign.
+State flows through React Context providers:
 
 ```
-Amethyst                        Igloo
-   │                              │
-   │──nostrsigner: intent────────▶│ InvisibleNIP55Handler.onCreate()
-   │                              │    ├─ parseNIP55Request()
-   │                              │    ├─ NIP55Deduplicator.check() → not duplicate
-   │                              │    ├─ checkPermission() → "allowed"
-   │                              │    └─ launchMainActivityForFastSigning()
-   │                              │         ├─ NIP55SigningService.start() [transient]
-   │                              │         ├─ PendingNIP55ResultRegistry.registerCallback()
-   │                              │         └─ NIP55RequestBridge.sendRequest()
-   │                              │
-   │                              │ MainActivity.onResume()
-   │                              │    ├─ NIP55RequestBridge.registerListener()
-   │                              │    └─ processNIP55Request()
-   │                              │         ├─ AsyncBridge.callNip55Async()
-   │                              │         │    └─ webView.evaluateJavascript()
-   │                              │         │
-   │                              │         │ [PWA Layer]
-   │                              │         │ window.nostr.nip55(request)
-   │                              │         │    ├─ SigningBatchQueue.add(eventId)
-   │                              │         │    └─ BifrostSignDevice.sign_event()
-   │                              │         │         └─ Bifrost P2P signing
-   │                              │         │
-   │                              │         └─ PendingNIP55ResultRegistry.deliverResult()
-   │                              │
-   │                              │ InvisibleNIP55Handler (callback invoked)
-   │                              │    ├─ completedResults.add(result)
-   │                              │    ├─ scheduleBatchReturn() [150ms delay]
-   │                              │    └─ returnBatchResults()
-   │                              │
-   │◀──────────RESULT_OK──────────│ finish()
-   │                              │
+StrictMode
+  └── SettingsProvider          # App config (storage key: igloo-pwa)
+      └── PermissionsProvider   # NIP-55 permissions (storage key: nip55_permissions_v2)
+          └── ConsoleProvider   # Debug logging (100 log limit)
+              └── NodeProvider  # Bifrost node lifecycle
+                  └── App       # Tab-based UI
 ```
 
-### 2. ContentProvider Flow (Background Signing)
-
-Used by apps that prefer synchronous ContentProvider queries for background signing.
-
-```
-Amethyst                                    Igloo
-   │                                          │
-   │──contentResolver.query()────────────────▶│ NIP55ContentProvider.query()
-   │  content://com.frostr.igloo.SIGN_EVENT   │    ├─ acquireWakeLock()
-   │                                          │    ├─ NIP55Deduplicator.check()
-   │                                          │    │    └─ Check resultCache (5s TTL)
-   │                                          │    ├─ MainActivity.getWebViewInstance()
-   │                                          │    │    └─ WebView available? ✓
-   │                                          │    ├─ hasAutomaticPermission() → ✓
-   │                                          │    └─ executeNIP55Operation()
-   │                                          │         ├─ webView.evaluateJavascript()
-   │                                          │         │    └─ window.nostr.nip55(request)
-   │                                          │         └─ NIP55ResultBridge.waitForResult()
-   │                                          │
-   │◀────────────Cursor with result───────────│ releaseWakeLock()
-   │                                          │
-```
-
-### 3. Permission Dialog Flow
-
-Triggered when the calling app needs user approval for the operation.
-
-```
-Amethyst                        Igloo
-   │                              │
-   │──nostrsigner: intent────────▶│ InvisibleNIP55Handler.onCreate()
-   │                              │    ├─ parseNIP55Request()
-   │                              │    └─ checkPermission() → "prompt_required"
-   │                              │
-   │                              │ MainActivity (SHOW_PERMISSION_DIALOG)
-   │                              │    └─ NIP55PermissionDialog.show()
-   │                              │
-   │                    ┌─────────┼─────────┐
-   │                    │   User Decision   │
-   │                    │   ┌───┐   ┌───┐   │
-   │                    │   │ ✓ │   │ ✗ │   │
-   │                    │   └───┘   └───┘   │
-   │                    └─────────┼─────────┘
-   │                              │
-   │                              │ [If approved]
-   │                              │    ├─ savePermission()
-   │                              │    ├─ handleApprovedPermission()
-   │                              │    └─ [Continue to signing flow]
-   │                              │
-   │◀───────────result────────────│
-   │                              │
-```
-
----
-
-## Implemented Features
-
-### 1. Multi-Layer Request Deduplication
-
-Prevents duplicate signing of the same event across retry attempts.
-
-| Layer | Location | Strategy | TTL |
-|-------|----------|----------|-----|
-| Android Intent | `NIP55Deduplicator.kt` | By operation content (event ID, ciphertext hash) | Session |
-| ContentProvider | `NIP55ContentProvider.kt` | Result cache by dedup key | 5 seconds |
-| PWA Batch Queue | `batch-signer.ts` | By Nostr event ID | 5 seconds |
-
-**Key Design Decision**: Deduplication is by **event content** (event ID), not request ID. This handles Amethyst's behavior of generating new request IDs on each retry (30s timeout).
-
-**Deduplication Key Generation**:
-```
-sign_event       → callingApp:sign_event:eventId
-nip04_decrypt    → callingApp:nip04_decrypt:ciphertext.hashCode():pubkey
-nip04_encrypt    → callingApp:nip04_encrypt:plaintext.hashCode():pubkey
-get_public_key   → callingApp:get_public_key
-```
-
-### 2. Request Queuing System
-
-Handles concurrent requests and cross-task communication.
-
-| Component | Purpose | Capacity |
-|-----------|---------|----------|
-| `InvisibleNIP55Handler.pendingRequests` | Concurrent intent handling | Unlimited |
-| `NIP55RequestBridge` | Cross-task request delivery | Queue until MainActivity ready |
-| `SigningBatchQueue.pendingByEventId` | PWA-side batching | 10 unique events max |
-
-### 3. Cross-Task Communication
-
-Solves the problem of delivering results between Android tasks.
-
-```
-InvisibleNIP55Handler (Task A)     MainActivity (Task B)
-        │                                   │
-        ├─registerCallback(id)─────────────▶│ PendingNIP55ResultRegistry
-        │                                   │
-        ├─sendRequest()────────────────────▶│ NIP55RequestBridge
-        │                                   │
-        │◀────────deliverResult(id)─────────┤
-        │                                   │
-```
-
-**Components**:
-- `PendingNIP55ResultRegistry`: Thread-safe callback registry using `ConcurrentHashMap`
-- `NIP55RequestBridge`: Singleton that queues requests when MainActivity unavailable
-
-### 4. Batch Result Return
-
-Optimizes for apps that send multiple rapid requests.
-
-- Requests accumulate for **150ms** before returning
-- Single intent can return multiple results via `results` JSON array
-- Amber-compatible response format
-
-### 5. Permission System
-
-Granular control over which operations each app can perform.
-
-| Feature | Description |
-|---------|-------------|
-| Kind-specific permissions | Allow/deny specific event kinds (e.g., kind 1 = posts) |
-| Wildcard permissions | `kind=null` applies to all event kinds |
-| Persistent storage | AES256-GCM encrypted via StorageBridge |
-| Storage key | `nip55_permissions_v2` |
-
-### 6. Auto-Unlock for Signing
-
-Allows signing even after PWA navigation/reload.
-
-- Session password stored in `sessionStorage` after unlock
-- 3-second timeout for auto-unlock via `waitForNodeClient()`
-- Enables seamless signing without re-prompting for password
-
-### 7. Stale Detection
-
-Prevents ContentProvider from hanging when app is throttled.
-
-- Tracks `lastActiveTimestamp` (updated in `onResume`)
-- **30-second threshold** for "stale" detection
-- Stale + not persistent mode → return null → Intent fallback
-
-### 8. Foreground Service
-
-Keeps process alive during signing operations.
-
-| Mode | Purpose | Wake Lock Timeout |
-|------|---------|-------------------|
-| Transient | Single signing operation | 60 seconds |
-| Persistent | Node online, background enabled | Indefinite |
-
-**Notification**: "Igloo ready" (persistent) or "Signing Nostr event" (transient)
-
----
-
-## Key Components
-
-### Android Layer
+### Key Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **InvisibleNIP55Handler** | `InvisibleNIP55Handler.kt` | Intent entry point, permission checking, result batching |
-| **MainActivity** | `MainActivity.kt` | WebView host, bridge registration, request processing |
-| **NIP55ContentProvider** | `NIP55ContentProvider.kt` | Background signing, wake locks, result caching |
-| **AsyncBridge** | `AsyncBridge.kt` | Modern async IPC via WebMessageListener |
-| **NIP55SigningService** | `NIP55SigningService.kt` | Foreground service for process keep-alive |
-| **NIP55RequestBridge** | `NIP55RequestBridge.kt` | Cross-task request queuing singleton |
-| **PendingNIP55ResultRegistry** | `PendingNIP55ResultRegistry.kt` | Cross-task result delivery registry |
-| **NIP55Deduplicator** | `util/NIP55Deduplicator.kt` | Shared deduplication logic |
+| **SettingsProvider** | `context/settings.tsx` | Persists group, share, relays to storage |
+| **NodeProvider** | `context/node.tsx` | Manages bifrost node lifecycle |
+| **PermissionsProvider** | `context/permissions.tsx` | NIP-55 permission state |
+| **BifrostSignDevice** | `class/signer.ts` | Wraps bifrost for signing operations |
+| **NIP55Bridge** | `components/util/nip55.tsx` | Sets up `window.nostr.nip55` |
 
-### PWA Layer
+### Node Status States
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| **executeAutoSigning** | `src/lib/signer.ts` | Auto-signing execution, bridge creation |
-| **SigningBatchQueue** | `src/lib/batch-signer.ts` | PWA-side dedup and batching queue |
-| **BifrostSignDevice** | `src/class/signer.ts` | Wraps bifrost node for signing operations |
-| **NIP55Bridge** | `src/components/util/nip55.tsx` | Sets up window.nostr.nip55 interface |
+The bifrost node (`NodeProvider`) has these states:
+
+| State | Description |
+|-------|-------------|
+| `init` | Initial state, not yet configured |
+| `disabled` | Node explicitly disabled |
+| `locked` | Configured but needs password to unlock |
+| `online` | Connected and ready for signing |
+| `offline` | Disconnected, will attempt reconnection |
 
 ---
 
-## File Reference
+## FROSTR/Bifrost Integration
 
-### Core Pipeline Files
+### What is FROSTR?
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `InvisibleNIP55Handler.kt` | ~950 | Intent entry point, permission checking, result batching |
-| `MainActivity.kt` | ~1200 | WebView host, bridge registration, request processing |
-| `NIP55ContentProvider.kt` | ~720 | Background signing, wake locks, result caching |
-| `AsyncBridge.kt` | ~320 | Modern async IPC via WebMessageListener |
-| `NIP55SigningService.kt` | ~150 | Foreground service for process keep-alive |
-| `NIP55RequestBridge.kt` | ~100 | Cross-task request queuing singleton |
-| `PendingNIP55ResultRegistry.kt` | ~50 | Cross-task result delivery registry |
-| `util/NIP55Deduplicator.kt` | ~80 | Shared deduplication logic |
+FROSTR is a protocol for **threshold signing** on Nostr. Instead of a single private key, FROSTR:
+1. Splits the key into multiple **shares** (e.g., 3 shares)
+2. Requires a **threshold** of shares to sign (e.g., 2 of 3)
+3. Coordinates signing over Nostr **relays**
 
-### PWA Files
+Igloo acts as one signing node in a FROSTR group.
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/lib/signer.ts` | ~180 | Auto-signing execution, bridge creation |
-| `src/lib/batch-signer.ts` | ~240 | PWA-side dedup and batching queue |
-| `src/class/signer.ts` | ~90 | BifrostSignDevice wrapper |
-| `src/components/util/nip55.tsx` | ~70 | window.nostr.nip55 interface setup |
+### Bifrost Node
 
-### Bridge Files
+The bifrost node handles FROSTR protocol operations:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        Bifrost Node                            │
+│                                                                │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────┐  │
+│  │  Group Config   │  │  Share (Secret) │  │ Peer Discovery │  │
+│  │  - Group pubkey │  │  - Key share    │  │ - Relay URLs   │  │
+│  │  - Threshold    │  │  - Share index  │  │ - Peer status  │  │
+│  └─────────────────┘  └─────────────────┘  └────────────────┘  │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                   Signing Protocol                       │  │
+│  │  1. Receive sign request                                 │  │
+│  │  2. Broadcast to peers via relay                         │  │
+│  │  3. Collect partial signatures                           │  │
+│  │  4. Combine when threshold reached                       │  │
+│  │  5. Return complete signature                            │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│                    WebSocket ↔ Nostr Relays                    │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `@frostr/bifrost` | FROSTR node implementation |
+| `@cmdcode/nostr-p2p` | P2P communication over Nostr |
+| `nostr-tools` | Nostr primitives |
+| `@noble/ciphers` | ChaCha20-Poly1305 (NIP-44) |
+| `@noble/hashes` | SHA256, HMAC |
+
+---
+
+## NIP-55 Signing Pipeline
+
+### Overview
+
+The NIP-55 pipeline handles signing requests from external Nostr apps. It uses **health-based routing** to manage WebView availability.
+
+### Health-Based Routing
+
+**Core insight:** WebView cannot survive in background. Android throttles it within seconds. The architecture embraces this:
+
+```
+Request Arrives
+       │
+       ▼
+┌────────────────────┐
+│ IglooHealthManager │
+│    isHealthy?      │
+└────────┬───────────┘
+         │
+    ┌────┴────┐
+    │         │
+ HEALTHY   UNHEALTHY
+    │         │
+    ▼         ▼
+ Process    Queue request
+immediately Launch MainActivity
+    │       Wait for healthy
+    │         │
+    └────┬────┘
+         │
+         ▼
+   AsyncBridge → PWA → Bifrost → Result
+```
+
+### Request Entry Points
+
+| Entry Point | Component | Use Case |
+|-------------|-----------|----------|
+| **Intent** | `InvisibleNIP55Handler` | User-initiated signing |
+| **ContentProvider** | `NIP55ContentProvider` | Background auto-signing |
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `IglooHealthManager` | Central health state, request queuing, caching |
+| `AsyncBridge` | Async JavaScript IPC via WebMessageListener |
+| `NIP55HandlerService` | Transient foreground service (handler protection) |
+| `PermissionChecker` | Permission validation |
+| `NIP55Deduplicator` | Content-based deduplication |
+
+### Supported Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `get_public_key` | Return group public key |
+| `sign_event` | Sign a Nostr event |
+| `nip04_encrypt` | AES-CBC encryption (legacy) |
+| `nip04_decrypt` | AES-CBC decryption (legacy) |
+| `nip44_encrypt` | ChaCha20-Poly1305 encryption |
+| `nip44_decrypt` | ChaCha20-Poly1305 decryption |
+
+### Timeouts and Limits
+
+| Parameter | Value |
+|-----------|-------|
+| Health timeout | 5 seconds |
+| AsyncBridge timeout | 30 seconds |
+| Result cache TTL | 5 seconds |
+| Rate limit | 20 requests/sec per app |
+| Max queue size | 50 requests |
+
+---
+
+## Security Architecture
+
+### Threat Model
+
+Igloo protects against:
+- **Key extraction** - Private key shares never leave secure storage
+- **Unauthorized signing** - Permission system controls which apps can sign
+- **Replay attacks** - Content-based deduplication prevents duplicate signing
+
+### Storage Security
+
+All sensitive data is encrypted at rest:
+
+| Data | Storage | Encryption |
+|------|---------|------------|
+| Key share | EncryptedSharedPreferences | AES256-GCM via Android Keystore |
+| Permissions | EncryptedSharedPreferences | AES256-GCM via Android Keystore |
+| Settings | EncryptedSharedPreferences | AES256-GCM via Android Keystore |
+
+### Permission System
+
+Granular control over NIP-55 operations:
+
+| Permission Type | Description |
+|-----------------|-------------|
+| Kind-specific | Allow specific event kinds (e.g., kind 1 = posts) |
+| Wildcard | `kind=null` applies to all event kinds |
+| Per-app | Each calling app has separate permissions |
+
+### WebView Security
+
+- **CSP enforced** - Content Security Policy limits script sources
+- **JavaScript disabled for external content** - Only PWA scripts execute
+- **No file:// access** - Prevents local file exfiltration
+
+---
+
+## Build System
+
+### Build Pipeline
+
+```
+npm run build:debug
+       │
+       ▼
+┌──────────────────┐
+│  esbuild         │  src/index.tsx → dist/app.js
+│  (PWA build)     │  src/sw.ts → dist/sw.js
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Copy assets     │  dist/ → android/app/src/main/assets/
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│  Gradle          │  ./gradlew assembleDebug
+│  (Android build) │
+└────────┬─────────┘
+         │
+         ▼
+   app-debug.apk
+```
+
+### Key Files
 
 | File | Purpose |
 |------|---------|
-| `bridges/WebSocketBridge.kt` | WebSocket polyfill for mobile persistence |
-| `bridges/StorageBridge.kt` | Encrypted localStorage replacement |
-| `bridges/ModernCameraBridge.kt` | CameraX integration for QR scanning |
-| `bridges/UnifiedSigningBridge.kt` | JavaScript interface for signing |
-| `bridges/NodeStateBridge.kt` | Bifrost node state communication |
+| `script/build.ts` | Build orchestration |
+| `android/app/build.gradle` | Android configuration |
+| `package.json` | NPM scripts |
 
----
-
-## Timeouts and Thresholds
-
-| Component | Timeout | Purpose |
-|-----------|---------|---------|
-| AsyncBridge | 30s | Per-operation timeout |
-| InvisibleNIP55Handler | 30s | Request timeout |
-| InvisibleNIP55Handler | 60s | Permission prompt timeout |
-| ContentProvider | 30s | Query timeout |
-| Batch return delay | 150ms | Collect concurrent requests |
-| Batch queue delay | 50ms | Coalesce PWA requests |
-| Stale detection | 30s | ContentProvider freshness |
-| Wake lock (transient) | 60s | Single operation limit |
-| Result cache TTL | 5s | Deduplication window |
-
----
-
-## Logging Tags
-
-For debugging, filter logcat with these tags:
+### Build Commands
 
 ```bash
-adb logcat -s "InvisibleNIP55Handler:*" "SecureIglooWrapper:*" "AsyncBridge:*" \
-              "NIP55ContentProvider:*" "NIP55SigningService:*" "NIP55RequestBridge:*" \
-              "NIP55ResultRegistry:*"
+npm run build          # PWA only
+npm run build:debug    # PWA + Android debug APK
+npm run build:release  # PWA + Android release APK
 ```
 
-| Tag | Component |
-|-----|-----------|
-| `InvisibleNIP55Handler` | Intent parsing, permission checking |
-| `SecureIglooWrapper` | MainActivity lifecycle, WebView |
-| `AsyncBridge` | JavaScript IPC |
-| `NIP55ContentProvider` | Background signing |
-| `NIP55SigningService` | Foreground service |
-| `NIP55RequestBridge` | Cross-task queuing |
-| `NIP55ResultRegistry` | Result callbacks |
-| `WebSocketBridge` | WebSocket connections |
-| `StorageBridge` | Encrypted storage |
+### Output Locations
+
+| Build | Path |
+|-------|------|
+| PWA | `dist/` |
+| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Release APK | `android/app/build/outputs/apk/release/app-release.apk` |
 
 ---
 
 ## See Also
 
-- `PIPELINE.md` - Original pipeline documentation
-- `RELEASE.md` - Release build guide
-- `NIP55_BACKGROUND_SIGNING_ANALYSIS.md` - Background signing limitations
-- `src/README.md` - PWA source code documentation
+- `DEVELOPMENT.md` - Development workflow and debugging
+- `CONVENTIONS.md` - Code style conventions
+- `protocols/NIP-55.md` - NIP-55 protocol specification

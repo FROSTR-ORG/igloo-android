@@ -1,12 +1,69 @@
-# Development Guide for Igloo PWA (NIP-55 Signer)
+# Development Guide
 
-This guide covers the complete development workflow for building, deploying, and testing the Igloo PWA Android application.
+This guide covers the complete development workflow for building, testing, and debugging the Igloo PWA Android application.
+
+---
+
+## Table of Contents
+
+1. [Project Context](#project-context)
+2. [Prerequisites](#prerequisites)
+3. [Build Process](#build-process)
+4. [Installation & Deployment](#installation--deployment)
+5. [Log Monitoring](#log-monitoring)
+6. [Testing Workflow](#testing-workflow)
+7. [Architecture Overview](#architecture-overview)
+8. [Development Workflows](#development-workflows)
+9. [Troubleshooting](#troubleshooting)
+10. [Reference](#reference)
+
+---
+
+## Project Context
+
+### What is Igloo?
+
+**Igloo** is a FROST-based signing device for the Nostr protocol. It uses FROSTR (a FROST implementation for Nostr) to enable threshold signing, where multiple key shares are required to produce a valid signature. This provides enhanced security compared to single-key signing.
+
+### What We're Building
+
+- A **NIP-55 signer** - an Android application that handles signing requests from other Nostr apps
+- Uses **FROSTR/Bifrost** for distributed threshold signing
+- Wrapped as a **PWA inside Android WebView** for cross-platform crypto support
+
+### Key Protocols
+
+| Protocol | Description |
+|----------|-------------|
+| **NIP-55** | Android signer protocol using intents and content providers |
+| **FROST** | Flexible Round-Optimized Schnorr Threshold signatures |
+| **Nostr** | Notes and Other Stuff Transmitted by Relays |
+
+### Testing Environment
+
+We test Igloo's signing capabilities by communicating with other Nostr applications:
+
+| App | Purpose |
+|-----|---------|
+| **Amethyst** | Nostr client that sends signing requests |
+| **Amber** | Reference NIP-55 signer (for comparison) |
+| **Coracle** | Alternative Nostr client |
+
+---
+
+## Prerequisites
+
+- **Node.js** (v18+) and npm
+- **Android SDK** (SDK 35 / Android 15)
+- **ADB** installed and in PATH
+- **Physical Android device** connected via USB with USB debugging enabled
+- **ngrok** (optional) - for remote relay testing
 
 ---
 
 ## Build Process
 
-### ⚠️ CRITICAL: Always Use the Build Script
+### CRITICAL: Always Use the Build Script
 
 **NEVER** run `./gradlew assembleDebug` directly. This will use **stale PWA assets** and your changes won't appear in the APK.
 
@@ -29,25 +86,31 @@ npm run build:release
 
 # Release APK + install to device
 npm run build -- --release --install
+
+# PWA only (no Android build)
+npm run build
 ```
 
 ### Build Script Options
 
 The build script (`script/build.ts`) supports these flags:
-- `--debug` - Copy PWA to Android assets and build debug APK
-- `--release` - Copy PWA to Android assets and build release APK
-- `--install` - Also install APK to connected device after building
-- `--watch` - Watch mode for PWA development (no Android build)
+
+| Flag | Description |
+|------|-------------|
+| `--debug` | Copy PWA to Android assets and build debug APK |
+| `--release` | Copy PWA to Android assets and build release APK |
+| `--install` | Also install APK to connected device after building |
+| `--watch` | Watch mode for PWA development (no Android build) |
 
 ### Output Locations
 
-- **Debug APK**: `android/app/build/outputs/apk/debug/app-debug.apk`
-- **Release APK**: `android/app/build/outputs/apk/release/app-release.apk`
-- **PWA dist**: `dist/` directory
+| Build Type | Path |
+|------------|------|
+| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Release APK | `android/app/build/outputs/apk/release/app-release.apk` |
+| PWA dist | `dist/` |
 
 ### PWA-Only Build
-
-If you only need to build the PWA (without Android):
 
 ```bash
 npm run build
@@ -72,211 +135,185 @@ npx tsc --noEmit
 
 ### Install to Device
 
-**Standard Install** (preserves app data):
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+# Standard install (preserves app data) - RECOMMENDED
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
-**Fresh Install** (clears all data - use sparingly):
-```bash
+# Fresh install (clears all data)
 adb uninstall com.frostr.igloo
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**⚠️ WARNING**: Do NOT use `adb shell pm clear com.frostr.igloo` during normal development. This wipes:
+**WARNING**: Do NOT use `adb shell pm clear com.frostr.igloo` during normal development. This wipes:
 - User's private keys
 - Permission grants
 - All app settings
 - LocalStorage data
 
-Only clear app data when explicitly testing first-run scenarios or resetting permissions.
+Only clear app data when explicitly testing first-run scenarios.
 
----
+### Package Name Configuration
 
-## Package Name Configuration
-
-### Debug vs Release Package Names
-
-- **Debug builds**: `com.frostr.igloo.debug` (via `applicationIdSuffix ".debug"`)
-- **Release builds**: `com.frostr.igloo`
+| Build Type | Package Name |
+|------------|--------------|
+| Debug | `com.frostr.igloo.debug` |
+| Release | `com.frostr.igloo` |
 
 Both work correctly because:
-- The manifest uses `${applicationId}` placeholders for content provider authorities
+- The manifest uses `${applicationId}` placeholders
 - Internal intents use `packageName` variable (not hardcoded strings)
-- Debug and release can be installed side-by-side with separate storage/permissions
+- Debug and release can be installed side-by-side
 
-**Verification**:
+**Verify installed package**:
 ```bash
 adb shell pm list packages | grep igloo
 ```
 
-**Current Configuration** (in `app/build.gradle`):
-```gradle
-android {
-    namespace 'com.frostr.igloo'
-    defaultConfig {
-        applicationId "com.frostr.igloo"
-    }
-
-    buildTypes {
-        debug {
-            applicationIdSuffix ".debug"
-        }
-    }
-}
-```
-
 ---
 
-## Testing Process
+## Log Monitoring
 
-### 1. Pre-Test Setup
+### App Log Tags
 
-**Clear logs before testing**:
+| Tag | Component | What to Look For |
+|-----|-----------|------------------|
+| `IglooHealthManager` | Health routing | Health state transitions, request queuing |
+| `SecureIglooWrapper` | MainActivity | WebView lifecycle, PWA loading progress |
+| `InvisibleNIP55Handler` | NIP-55 | Signing requests from external apps |
+| `NIP55ContentProvider` | Background | ContentProvider queries, health checks |
+| `NIP55HandlerService` | Service | Handler protection service lifecycle |
+| `AsyncBridge` | IPC | PWA ↔ Android communication |
+| `ModernCameraBridge` | Camera | QR scanning, camera initialization |
+| `SecureStorageBridge` | Storage | Encrypted storage operations |
+| `WebSocketBridge` | Network | Relay connections, WebSocket events |
+
+### Essential Commands
+
 ```bash
+# Clear all logs (do this before testing)
 adb logcat -c
+
+# Get last N lines
+adb logcat -t 200
+
+# Filter by tag
+adb logcat -s "TAG:*"
+
+# Recommended monitoring command
+adb logcat -c && adb logcat -s "IglooHealthManager:*" "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "AsyncBridge:*"
 ```
 
-**Launch the app**:
-```bash
-adb shell am start -n com.frostr.igloo/.MainActivity
-```
+### Log Monitoring Methods
 
-### 2. Monitor Logs (Real-time)
+#### Method 1: Fresh Logs (RECOMMENDED)
 
-**Igloo + Amethyst Combined Monitoring**:
-```bash
-adb logcat -s \
-  "SecureIglooWrapper:*" \
-  "InvisibleNIP55Handler:*" \
-  "NIP55ResultRegistry:*" \
-  "MainActivity:*" \
-  "Amethyst:*" \
-  "AndroidRuntime:E" \
-  "*:F"
-```
-
-**Igloo Only** (focused debugging):
-```bash
-adb logcat -s \
-  "SecureIglooWrapper:*" \
-  "InvisibleNIP55Handler:*" \
-  "MainActivity:*" \
-  "AndroidRuntime:E" \
-  "*:F"
-```
-
-**WebView/JavaScript Errors**:
-```bash
-adb logcat -s "chromium:I" "chromium:W" "chromium:E"
-```
-
-### 3. Recommended Log Monitoring Methods
-
-#### Method 1: Fresh Logs from Recent Events (RECOMMENDED)
-
-**⚠️ BEST PRACTICE**: Use `adb logcat -t <count>` to get fresh logs from recent events.
+Use `adb logcat -t <count>` to get fresh logs from recent events:
 
 ```bash
-# Get last 500 lines (most recent events)
 adb logcat -t 500 -s \
   "SecureIglooWrapper:*" \
   "InvisibleNIP55Handler:*" \
-  "MainActivity:*" \
+  "IglooHealthManager:*" \
   "AndroidRuntime:E" \
   "*:F"
 ```
 
-**When to use**: After any test run, crash, or user action. This pulls the most recent logs directly from the device log buffer.
+**When to use**: After any test run, crash, or user action.
 
-**Why it works**:
-- Gets fresh data from the actual logcat buffer
-- No timeout issues
-- Timestamps show exactly when events occurred
-- Can quickly verify if logs are from the test you just ran
+#### Method 2: Post-Crash Capture
 
-#### Method 2: Post-Test Crash Log Capture
-
-**When to use**: Immediately after a crash to capture the stack trace.
+Immediately after a crash:
 
 ```bash
-# Save last 200 lines to file for analysis
 adb logcat -d -t 200 > /tmp/crash.log
-```
-
-Then read the file:
-```bash
 cat /tmp/crash.log | grep -A 20 "FATAL EXCEPTION"
 ```
 
-**Benefits**:
-- Captures complete crash stack trace
-- Can be saved and analyzed later
-- No risk of timeout
-- Preserves exact state at crash time
+#### Method 3: Continuous Monitoring
 
-#### Method 3: Background Monitoring During Testing
-
-**When to use**: When actively testing and want continuous monitoring.
+During active testing:
 
 ```bash
-# Start in background before testing
 adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "MainActivity:*" "AndroidRuntime:E" "*:F" &
 ```
 
-**⚠️ WARNING**: Background bash shell logs become STALE quickly. Do NOT rely on BashOutput from shells started hours ago.
+**WARNING**: Background bash logs become STALE quickly. If started >15 minutes ago, use Method 1 instead.
 
-**Rule**: If a background bash was started more than 15 minutes ago, use Method 1 instead.
+### Verify Log Freshness
 
-#### Verification: Check Log Timestamps
-
-**CRITICAL**: Always check timestamps when analyzing logs.
+Always check timestamps when debugging:
 
 ```bash
-# Use -v time to see timestamps
 adb logcat -t 100 -v time -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
 ```
 
-**Example output**:
-```
-10-05 14:32:15.123  1234  1234 D SecureIglooWrapper: PWA loaded successfully
-```
+If timestamps are >5 minutes old when debugging a recent crash, you're looking at STALE data.
 
-**If timestamps are more than 5 minutes old when debugging a "just happened" crash, you're looking at STALE data.**
+### Common Log Patterns
 
-See `/home/cscott/Repos/frostr/pwa/android/CRITICAL_ALWAYS_CHECK_FRESH_LOGS.md` for complete details.
+| Pattern | Meaning |
+|---------|---------|
+| `[PWA LOAD] Progress: X%` | PWA loading (100% = ready) |
+| `[PWA LOAD] Progress: 80%` (stuck) | Background WebView limitation |
+| `NIP-55 request received` | External app requesting signature |
+| `Permission check:` | Permission system evaluation |
+| `[bifrost]` | FROSTR node activity |
 
-### 4. Test NIP-55 Signing Flow
+---
 
-**Full Test Sequence**:
-1. Open Amethyst
-2. Navigate to Settings → Security & Privacy → Signing Key
-3. Select "Use External Signer" → Choose Igloo
-4. Grant permissions when prompted
-5. Attempt to create a post or perform an action requiring signing
-6. **Expected**: Igloo activity launches, signing completes, returns to Amethyst
-7. **Check logs** for any errors or timeouts
+## Testing Workflow
 
-**Common Issues to Watch For**:
-- Amethyst timeout: `TimedOutException: User didn't accept or reject in time`
-- Missing parameters: `Missing required parameters for nip44_decrypt`
-- PWA not loading: `Waiting for PWA to load... (26/30)`
-- Job cancellation: `JobCancellationException`
+### Testing with Amethyst
 
-### 5. Verify NIP-55 Intent Flow
+This is the primary workflow for verifying NIP-55 signing.
 
-**Check if Igloo is registered as NIP-55 handler**:
+#### Prerequisites
+
+- Android device connected via ADB
+- Igloo APK installed and configured
+- Amethyst APK installed
+- Bench environment running (`npm run bench`)
+
+#### Setup
+
 ```bash
+# Clear Amethyst data for fresh start
+adb shell pm clear com.vitorpamplona.amethyst
+
+# Launch Amethyst
+adb shell am start -n com.vitorpamplona.amethyst/.ui.MainActivity
+```
+
+#### Test Steps
+
+1. **Sign In**: Select "Sign in with Amber" → Choose Igloo
+   - Expected: Igloo displays permission prompt
+
+2. **Accept Permissions**: Check "Remember this permission" → Accept
+   - Expected: Public key returned, focus returns to Amethyst
+
+3. **Publish a Note**: Compose and publish
+   - Expected: Signing occurs in background (no focus switch)
+
+4. **Verify**: Check your profile for the published note
+
+#### Expected Log Patterns
+
+| Step | Log Pattern |
+|------|-------------|
+| Sign In | `NIP-55 request received`, `type: get_public_key` |
+| Accept | `Permission check:`, `Permission saved` |
+| Publish | `NIP-55 request received`, `type: sign_event`, `auto-approved` |
+
+### Verify NIP-55 Registration
+
+```bash
+# Check if Igloo is registered as NIP-55 handler
 adb shell dumpsys package com.frostr.igloo | grep -A 20 "Activity filter"
-```
 
-**Expected output** should include:
-- `android.intent.action.VIEW`
-- `android.intent.category.BROWSABLE`
-- `scheme: "nostrsigner"`
+# Expected: android.intent.action.VIEW, scheme: "nostrsigner"
 
-**Manually trigger NIP-55 intent**:
-```bash
+# Manually trigger NIP-55 intent
 adb shell am start -a android.intent.action.VIEW \
   -d "nostrsigner:?type=get_public_key&package=com.example.test"
 ```
@@ -285,174 +322,88 @@ adb shell am start -a android.intent.action.VIEW \
 
 ## Architecture Overview
 
-### NIP-55 Flow (Intent-Based, No Content Resolver)
+### NIP-55 Flow (Health-Based Routing)
 
-1. **Amethyst** sends NIP-55 request via Intent with `nostrsigner:` URI
-2. **InvisibleNIP55Handler** receives Intent, parses request
-3. **MainActivity** is launched with NIP-55 data, loads PWA
-4. **PWA** displays prompt or auto-signs based on permissions
-5. **MainActivity** receives result from PWA, calls `setResult()`
-6. **Result delivered** back to Amethyst via `onActivityResult()`
+The NIP-55 pipeline uses a health-based routing system. All requests flow through `IglooHealthManager`:
 
-**Key Components**:
-- `InvisibleNIP55Handler.kt` - Thin routing layer, receives `nostrsigner:` URIs
-- `MainActivity.kt` - Hosts PWA, handles signing execution
-- `PendingNIP55ResultRegistry.kt` - Cross-task result delivery using callbacks
-- `UnifiedSigningBridge.kt` - JavaScript↔Kotlin bridge for signing operations
+1. **External app** sends NIP-55 request via Intent or ContentProvider
+2. **InvisibleNIP55Handler** or **NIP55ContentProvider** receives request
+3. **IglooHealthManager** checks if WebView is healthy (ready within last 5 seconds)
+4. **If healthy**: Request processed immediately via AsyncBridge
+5. **If unhealthy**: Request queued, MainActivity launched to restore WebView
+6. **PWA** performs signing via BifrostSignDevice
+7. **Result delivered** via callback to original handler
 
-**Content Resolver Removed**: We previously used Content Resolver, but it caused Amethyst to be killed for "excessive binder traffic during cached". The Intent-only architecture keeps Amethyst in foreground state during signing.
+### Key Components
 
-See `/home/cscott/Repos/frostr/pwa/android/NIP55_BACKGROUND_SIGNING_ANALYSIS.md` for details on why Content Resolver was removed.
+| Component | Purpose |
+|-----------|---------|
+| `InvisibleNIP55Handler.kt` | Intent entry point, routes to IglooHealthManager |
+| `MainActivity.kt` | WebView host, calls `markHealthy()` when PWA ready |
+| `NIP55ContentProvider.kt` | Background signing entry, checks health |
+| `IglooHealthManager.kt` | Central health state, request queuing, caching |
+| `NIP55HandlerService.kt` | Transient foreground service protecting handler |
+| `AsyncBridge.kt` | Modern async JavaScript IPC |
+
+See `docs/ARCHITECTURE.md` for detailed diagrams and flow descriptions.
 
 ---
 
-## Development Workflow
+## Development Workflows
 
 ### Standard Development Cycle
 
-**IMPORTANT FOR CLAUDE CODE**: After making any code changes, you MUST complete ALL of these steps in sequence:
+After making code changes:
 
 ```bash
-# 1. Make code changes to PWA (src/) or Android (android/app/src/)
-
-# 2. Build and install (ONE COMMAND - handles PWA build, asset copy, APK build, and install)
+# 1. Build and install
 npm run build -- --debug --install
 
-# 3. Clear logs and prepare for testing (REQUIRED)
+# 2. Clear logs and prepare for testing
 adb logcat -c
 
-# 4. Monitor logs (REQUIRED - start monitoring before user tests)
-adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "MainActivity:*" "AndroidRuntime:E" "*:F"
+# 3. Monitor logs before user tests
+adb logcat -s "IglooHealthManager:*" "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "AndroidRuntime:E" "*:F"
 ```
 
-**Rule**: After building the APK, ALWAYS proceed to clear logs and start monitoring. Do not stop after the build step.
+**Rule**: After building the APK, ALWAYS proceed to clear logs and start monitoring.
 
-### Quick Iteration (Kotlin-only changes)
+### Fresh Development Session
 
-If you only changed Kotlin code (no PWA changes), you still need to use the build script to ensure assets are current:
+```bash
+# 1. Connect device and verify
+adb devices
+
+# 2. Start bench environment (Terminal 1)
+npm run keygen    # if keyset.json doesn't exist
+npm run bench
+
+# 3. Build and install (Terminal 2)
+npm run build -- --debug --install
+
+# 4. Monitor logs (Terminal 3)
+adb logcat -c && adb logcat -s "IglooHealthManager:*" "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
+```
+
+### Quick Iteration
+
+Even for Kotlin-only changes, always use the build script:
 
 ```bash
 npm run build -- --debug --install
 adb logcat -c
-# Then start monitoring before user tests
-adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*" "MainActivity:*" "AndroidRuntime:E" "*:F"
 ```
 
-**Note**: Even for Kotlin-only changes, always use `npm run build:debug` rather than `./gradlew` directly to avoid stale asset issues.
+### Git Workflow
 
-### TypeScript Type Reorganization
-
-When reorganizing types:
-1. Move interfaces/types to appropriate files in `src/types/`
-2. Update imports in consuming files
-3. Run type check: `npx tsc --noEmit`
-4. Check conventions compliance (see `docs/CONVENTIONS.md`)
-5. Build and test
-
-**Conventions**:
-- Functions/variables: `snake_case`
-- Types/Interfaces: `PascalCase`
-- Constants: `SCREAMING_SNAKE_CASE`
-- Vertical alignment of colons in interfaces
-- Import alignment on `from` keyword
-
----
-
-## Debugging Tips
-
-### PWA Won't Load (Timeout after 30 seconds)
-
-**Symptoms**:
-```
-SecureIglooWrapper: Waiting for PWA to load... (26/30)
-```
-
-**Causes**:
-1. JavaScript error in PWA preventing `window.IglooPWA.ready()` call
-2. Missing or outdated PWA assets in APK
-3. Service Worker crash
-
-**Debug Steps**:
-1. Check for JavaScript errors: `adb logcat -s "chromium:*"`
-2. Verify PWA was rebuilt and APK was cleaned: `./gradlew clean assembleDebug`
-3. Check service worker: Look for SW registration errors in chromium logs
-
-### Amethyst Timeouts
-
-**Symptoms**:
-```
-TimedOutException: Could not sign: User didn't accept or reject in time.
-```
-
-**Causes**:
-1. PWA not loaded in time (see above)
-2. Signing operation taking too long
-3. User didn't respond to prompt
-
-**Debug Steps**:
-1. Check if MainActivity is visible and responsive
-2. Monitor UnifiedSigningBridge logs for signing progress
-3. Check for coroutine cancellation: `JobCancellationException`
-
-### Missing Parameters Errors
-
-**Symptoms**:
-```
-Missing required parameters for nip44_decrypt
-```
-
-**Causes**:
-1. Amethyst sent malformed NIP-55 request
-2. Intent parsing failed in InvisibleNIP55Handler
-3. PWA received incomplete data
-
-**Debug Steps**:
-1. Check InvisibleNIP55Handler logs for parsed intent data
-2. Enable NIP-55 debug logging (see `NIP55DebugLogger.kt`)
-3. Verify request format matches NIP-55 spec
-
----
-
-## File Locations
-
-### Key Documentation
-- `CLAUDE.md` - Project overview for Claude
-- `android/README.md` - Android architecture docs
-- `src/README.md` - PWA source code docs
-
-### Build Scripts
-- `script/build.ts` - PWA build configuration (esbuild)
-- `android/app/build.gradle` - Android build config
-
-### Source Directories
-- `src/` - PWA TypeScript/React source
-- `android/app/src/main/kotlin/com/frostr/igloo/` - Android Kotlin source
-- `public/` - PWA static assets (HTML, manifest, icons)
-
----
-
-## Common Gotchas
-
-1. **Gradle caching**: If PWA changes don't appear in APK, run `./gradlew clean`
-2. **Stale logs**: Always use `adb logcat -t` for fresh logs, not background bash output
-3. **Data persistence**: Use `adb install -r` to preserve user data during reinstall
-4. **Service Worker**: Clear browser cache if SW isn't updating: Settings → Apps → Igloo → Storage → Clear Cache
-5. **Type imports**: After reorganizing types, rebuild PWA to catch missing imports
-
----
-
-## Git Workflow
-
-### Before Committing
+Before committing:
 
 1. Run TypeScript type check: `npx tsc --noEmit`
-2. Test build process: `npm run build && cd android && ./gradlew assembleDebug`
+2. Test build process: `npm run build:debug`
 3. Test on device with fresh install
 4. Verify NIP-55 signing works with Amethyst
 
-### Commit Message Format
-
-Follow conventional commits:
+**Commit message format**:
 ```
 type(scope): description
 
@@ -465,68 +416,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ---
 
-## Useful ADB Commands
+## Troubleshooting
 
-### ⚠️ IMPORTANT: ADB Server Management
-
-**NEVER restart the ADB server (`adb kill-server` / `adb start-server`) without explicit permission from the user.** Restarting ADB disconnects all devices and kills all background logcat sessions, which disrupts active debugging workflows.
-
-If ADB commands are hanging or timing out:
-1. First check device status: `adb devices`
-2. Try clearing just the logcat buffer: `adb logcat -c`
-3. Only as a last resort, and ONLY with user permission, restart ADB server
-
-### Common Commands
-
-```bash
-# Check installed package
-adb shell pm list packages | grep igloo
-
-# Check package details
-adb shell dumpsys package com.frostr.igloo | head -50
-
-# Check device connection status
-adb devices
-
-# Force stop app
-adb shell am force-stop com.frostr.igloo
-
-# Launch app
-adb shell am start -n com.frostr.igloo/.MainActivity
-
-# Trigger NIP-55 intent
-adb shell am start -a android.intent.action.VIEW \
-  -d "nostrsigner:?type=get_public_key&package=com.example.test"
-
-# Check app data size
-adb shell du -sh /data/data/com.frostr.igloo
-
-# View SharedPreferences (requires root or debuggable build)
-adb shell run-as com.frostr.igloo cat shared_prefs/permissions.xml
-```
-
----
-
-## Performance Monitoring
-
-### APK Size
-```bash
-ls -lh app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Build Time
-```bash
-time ./gradlew assembleDebug
-```
-
-### Memory Usage
-```bash
-adb shell dumpsys meminfo com.frostr.igloo
-```
-
----
-
-## Troubleshooting Reference
+### Quick Reference
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
@@ -535,8 +427,159 @@ adb shell dumpsys meminfo com.frostr.igloo
 | "Missing required parameters" | Malformed NIP-55 request | Check InvisibleNIP55Handler parsing |
 | APK unchanged after PWA build | Gradle cache | Run `./gradlew clean` |
 | NIP-55 not working | Wrong package name | Verify `com.frostr.igloo` exactly |
-| Stale log data | Background bash output | Use `adb logcat -t 500` for fresh logs |
+| Stale log data | Background bash output | Use `adb logcat -t 500` |
+| Amethyst doesn't find signer | Igloo not registered | Reinstall Igloo APK |
+| Permission prompt doesn't appear | Intent not reaching Igloo | Check InvisibleNIP55Handler logs |
+| Signing hangs | Bifrost node not connected | Verify bench is running |
+| Background signing fails | Permission not saved | Re-grant with "Remember" |
+
+### PWA Won't Load (Timeout after 30 seconds)
+
+**Symptoms**:
+```
+SecureIglooWrapper: Waiting for PWA to load... (26/30)
+```
+
+**Debug Steps**:
+1. Check for JavaScript errors: `adb logcat -s "chromium:*"`
+2. Verify PWA was rebuilt: `./gradlew clean assembleDebug`
+3. Check service worker: Look for SW registration errors
+
+### Stale Logs
+
+**Problem**: Logs show old behavior that doesn't match current code
+
+**Solution**: Always clear and get fresh logs:
+```bash
+adb logcat -c && adb logcat -t 200
+```
+
+### WebView Caching
+
+**Problem**: PWA changes not reflected in app
+
+**Solution**: Reinstall with `-r` flag:
+```bash
+adb install -r <apk>
+```
+
+**Nuclear option**: Full uninstall and reinstall:
+```bash
+adb uninstall com.frostr.igloo
+adb install <apk>
+```
+
+### Port Conflicts
+
+```bash
+# Check what's using the port
+lsof -i :8080
+lsof -i :3000
+
+# Kill the process
+kill <PID>
+```
+
+### Device Not Found
+
+1. Check USB cable and connection
+2. Enable USB debugging (Settings → Developer Options)
+3. Accept RSA key prompt on device
+4. Restart ADB (last resort):
+```bash
+adb kill-server && adb start-server
+```
+
+### Gradle Build Fails
+
+- Ensure Android SDK 35 is installed
+- Check `local.properties` has correct SDK path
+- Try clean build: `./gradlew clean assembleDebug`
+- Check Java version (requires Java 8+)
 
 ---
 
-**Last Updated**: 2025-10-05
+## Reference
+
+### Quick Start Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start PWA dev server (port 3000) |
+| `npm run build` | Build PWA only |
+| `npm run build:debug` | Build PWA + copy to Android + build debug APK |
+| `npm run build:release` | Build PWA + copy to Android + build release APK |
+| `npm run keygen` | Generate test keys (creates keyset.json) |
+| `npm run bench` | Start bench environment (relay + ngrok + bifrost) |
+| `npm run qrgen <string>` | Generate QR code for a string |
+
+### Useful ADB Commands
+
+```bash
+# Check installed package
+adb shell pm list packages | grep igloo
+
+# Check package details
+adb shell dumpsys package com.frostr.igloo | head -50
+
+# Force stop app
+adb shell am force-stop com.frostr.igloo
+
+# Launch app
+adb shell am start -n com.frostr.igloo/.MainActivity
+
+# Check app data size
+adb shell du -sh /data/data/com.frostr.igloo
+
+# View SharedPreferences (requires debuggable build)
+adb shell run-as com.frostr.igloo cat shared_prefs/permissions.xml
+```
+
+**IMPORTANT**: Never restart ADB server (`adb kill-server`) without user permission - it disconnects all devices and kills logcat sessions.
+
+### Performance Monitoring
+
+```bash
+# APK size
+ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+
+# Build time
+time ./gradlew assembleDebug
+
+# Memory usage
+adb shell dumpsys meminfo com.frostr.igloo
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_PORT` | 8080 | Local relay WebSocket port |
+| `NGROK_DOMAIN` | relay.ngrok.dev | ngrok custom domain |
+| `DEBUG` | false | Enable debug logging in relay |
+| `VERBOSE` | false | Enable verbose logging in relay |
+
+### File Locations
+
+| Description | Path |
+|-------------|------|
+| PWA source | `src/` |
+| PWA output | `dist/` |
+| Android source | `android/app/src/main/kotlin/com/frostr/igloo/` |
+| Android assets | `android/app/src/main/assets/` |
+| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Release APK | `android/app/build/outputs/apk/release/app-release.apk` |
+| Test keyset | `keyset.json` |
+| Build script | `script/build.ts` |
+| Bench script | `script/bench.ts` |
+
+### Related Documentation
+
+- `CLAUDE.md` - Project overview for Claude Code
+- `docs/ARCHITECTURE.md` - Complete NIP-55 pipeline architecture
+- `docs/CONVENTIONS.md` - Code style conventions
+- `docs/protocols/NIP-55.md` - NIP-55 protocol specification
+
+---
+
+**Last Updated**: 2025-12-22

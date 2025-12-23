@@ -107,8 +107,8 @@ npm run serve
 To monitor application logs over adb:
 
 ```bash
-# Monitor Android logs
-adb logcat -s "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
+# Monitor Android logs (includes health management)
+adb logcat -s "IglooHealthManager:*" "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"
 ```
 
 ### Building
@@ -139,9 +139,10 @@ npm run release
 
 ## Documentation
 
-- `docs/NIP-55.md` - NIP-55 protocol details
+- `docs/ARCHITECTURE.md` - Complete NIP-55 pipeline architecture
 - `docs/DEVELOPMENT.md` - Extended development guide
-- `android/README.md` - Android-specific documentation
+- `docs/CONVENTIONS.md` - Code style conventions
+- `docs/protocols/NIP-55.md` - NIP-55 protocol specification
 
 ## License
 
