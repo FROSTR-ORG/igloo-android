@@ -1,10 +1,12 @@
-# Code Style Guide
+# Code Style Guide (TypeScript/PWA)
 
-This document defines the coding style and conventions used throughout the current project. These guidelines ensure consistency, readability, and maintainability across the codebase.
+This document defines the coding style and conventions used for the **PWA source code** located in `src/`. These guidelines ensure consistency, readability, and maintainability across the TypeScript codebase.
+
+> **Scope**: These conventions apply to the React/TypeScript PWA in `src/`. The Android/Kotlin code in `android/` follows standard Kotlin conventions.
 
 ## Overview
 
-This project follows a **functional programming** approach with strict TypeScript conventions. The style emphasizes clarity, type safety, and domain-specific terminology for Nostr protocol and Lightning Network development.
+The PWA follows a **functional programming** approach with strict TypeScript conventions. The style emphasizes clarity, type safety, and domain-specific terminology for Nostr protocol development.
 
 ## Naming Conventions
 
@@ -454,4 +456,4 @@ For generating linting configurations:
 - **Function Parameters**: All colons in multi-line function parameter lists must be vertically aligned
 - **Variable Declarations**: Related variable declarations should align assignment operators when on consecutive lines
 
-This style guide ensures consistency across the DUCAT Core Library and serves as the foundation for automated linting and formatting rules.
+This style guide ensures consistency across the Igloo PWA codebase and serves as the foundation for automated linting and formatting rules.

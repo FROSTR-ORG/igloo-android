@@ -57,7 +57,7 @@ Running Gradle directly will use **stale PWA assets** and your changes won't app
 The dev server runs on port 3000 and is accessible on all network interfaces for mobile testing.
 
 ### Android/Mobile Development
-- `adb logcat -s "SecureIglooWrapper:*" "ModernCameraBridge:*" "SecureStorageBridge:*" "WebSocketBridge:*"` - Monitor Android app logs for debugging
+- `adb logcat -s "IglooHealthManager:*" "SecureIglooWrapper:*" "InvisibleNIP55Handler:*"` - Monitor Android app logs for debugging
 - `adb logcat -c` - Clear Android logs before monitoring
 - The Android companion app provides secure storage, polyfill bridges, and system integration
 - Use Chrome DevTools on desktop to debug the PWA when running in Android WebView
@@ -202,21 +202,25 @@ The bifrost node (`src/context/node.tsx`) has these states:
 - Clear and monitor fresh: `adb logcat -c && adb logcat -s "InvisibleNIP55Handler:*"`
 - If timestamp is >5 minutes old, it's stale
 
-### NIP-55 Pipeline Architecture
+### NIP-55 Pipeline Architecture (Health-Based Routing)
 ```
-External App → InvisibleNIP55Handler → MainActivity → PWA WebView → UnifiedSigningBridge
-     ↓                ↓                    ↓              ↓                  ↓
-NIP-55 Intent    Intent Parsing     Intent Forwarding  JavaScript    Bridge Processing
+External App → InvisibleNIP55Handler → IglooHealthManager → AsyncBridge → PWA
+     ↓                ↓                      ↓                   ↓          ↓
+NIP-55 Intent    Intent Parsing        Health Check         JavaScript   Signing
+                                       (5s timeout)          IPC
 ```
 
-**Process Isolation:**
-- `:native_handler` process: InvisibleNIP55Handler (lightweight validation)
-- `:main` process: MainActivity + PWA + All bridges (secure environment)
+**Health-Based Routing:**
+- `IglooHealthManager` tracks WebView readiness (5-second health timeout)
+- When healthy: Requests processed immediately via AsyncBridge
+- When unhealthy: MainActivity launched to restore WebView, requests queued
+- ContentProvider returns null when unhealthy, triggering Intent fallback
 
 **Key Files:**
-- `InvisibleNIP55Handler.kt` - Entry point, validates `nostrsigner:` intents
-- `MainActivity.kt` - WebView host, injects requests into PWA
-- `UnifiedSigningBridge.kt` - JavaScript interface for crypto operations
+- `IglooHealthManager.kt` - Central health state, request queuing, response caching
+- `InvisibleNIP55Handler.kt` - Intent entry point, routes to IglooHealthManager
+- `NIP55ContentProvider.kt` - Background signing entry, checks health state
+- `MainActivity.kt` - WebView host, calls `markHealthy()` when PWA ready
 - `AsyncBridge.kt` - Modern async IPC via WebMessageListener
 
 ### Background Signing Limitation
@@ -276,14 +280,11 @@ new WebSocket()                        // → WebSocketBridge (OkHttp)
 
 ## Detailed Documentation
 
-For comprehensive understanding of the codebase architecture:
+For comprehensive understanding of the codebase:
 
-### Source Code Architecture
-- **`src/README.md`** - Complete PWA source code documentation
-
-### Android Wrapper Architecture
-- **`android/README.md`** - Complete Android shell documentation
-- **`android/PIPELINE.md`** - NIP-55 pipeline architecture details
-- **`android/RELEASE.md`** - Release build guide
-- **`android/NIP55_BACKGROUND_SIGNING_ANALYSIS.md`** - Background signing limitations
-- **`android/CRITICAL_*.md`** - Hard-won lessons and warnings
+### Primary Documentation
+- **`README.md`** - Project overview, features, quick start guide
+- **`docs/ARCHITECTURE.md`** - Complete application architecture (Android layer, PWA layer, NIP-55 pipeline, security model)
+- **`docs/DEVELOPMENT.md`** - Development guide with build process, testing workflows, log monitoring, and troubleshooting
+- **`docs/CONVENTIONS.md`** - Code style conventions
+- **`docs/protocols/NIP-55.md`** - NIP-55 protocol specification
