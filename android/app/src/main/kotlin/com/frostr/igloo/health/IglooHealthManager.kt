@@ -47,6 +47,7 @@ object IglooHealthManager {
 
     private const val HEALTH_TIMEOUT_MS = 10_000L          // 10 second health timeout
     private const val CACHE_TTL_MS = 10_000L               // 10 second cache TTL (match health timeout)
+    private const val AUTH_CACHE_TTL_MS = 60_000L          // 60 second cache TTL for kind 22242 relay auth
     private const val BATCH_WINDOW_MS = 100L               // 100ms batch window for sign_event
     private const val MAX_QUEUE_SIZE = 50                  // Max pending requests when unhealthy
     private const val MAX_CACHE_SIZE = 100                 // Max cached results
@@ -385,8 +386,15 @@ object IglooHealthManager {
 
         try {
             val intent = Intent(context, com.frostr.igloo.MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                // FLAG_ACTIVITY_NEW_TASK: Required when starting from non-Activity context
+                // FLAG_ACTIVITY_REORDER_TO_FRONT: Bring existing instance to front
+                // FLAG_ACTIVITY_CLEAR_TOP: Clear activities above MainActivity
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("nip55_wakeup", true)
+                putExtra("background_signing_request", true)  // Show signing overlay
+                putExtra("cold_start", true)
             }
             context.startActivity(intent)
             NIP55Metrics.recordWakeupIntent()
@@ -519,7 +527,7 @@ object IglooHealthManager {
             return false
         }
 
-        // 5. Register as in-flight
+        // 5. Register as in-flight (this is NOT a duplicate)
         synchronized(inFlightRequests) {
             inFlightRequests[dedupeKey] = mutableListOf(callback)
             // Store request ID mapping for permission dialog result delivery
@@ -758,7 +766,11 @@ object IglooHealthManager {
         val cached = resultCache[dedupeKey] ?: return null
         val age = System.currentTimeMillis() - cached.timestamp
 
-        if (age > effectiveCacheTimeout) {
+        // Use longer TTL for relay auth (kind 22242) events
+        // These have dedup keys like: "app:sign_event:auth:relay:challenge"
+        val ttl = if (dedupeKey.contains(":auth:")) AUTH_CACHE_TTL_MS else effectiveCacheTimeout
+
+        if (age > ttl) {
             resultCache.remove(dedupeKey)
             return null
         }
@@ -792,7 +804,9 @@ object IglooHealthManager {
 
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (now - entry.value.timestamp > effectiveCacheTimeout) {
+            // Use longer TTL for auth entries
+            val ttl = if (entry.key.contains(":auth:")) AUTH_CACHE_TTL_MS else effectiveCacheTimeout
+            if (now - entry.value.timestamp > ttl) {
                 iterator.remove()
                 cleaned++
             }
@@ -891,6 +905,12 @@ object IglooHealthManager {
     fun setHealthyForTesting(healthy: Boolean) {
         isHealthy = healthy
     }
+
+    /**
+     * Check if there are any pending or in-flight signing requests.
+     * Used by MainActivity to determine if signing overlay should be shown.
+     */
+    fun hasPendingRequests(): Boolean = pendingQueue.isNotEmpty() || inFlightRequests.isNotEmpty()
 
     @VisibleForTesting
     fun getPendingQueueSize(): Int = pendingQueue.size

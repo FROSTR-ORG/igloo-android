@@ -19,7 +19,6 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 import com.frostr.igloo.health.IglooHealthManager
 import com.frostr.igloo.util.JavaScriptEscaper
-import com.frostr.igloo.util.AuditLogger
 import com.frostr.igloo.debug.NIP55TraceContext
 import com.frostr.igloo.debug.NIP55Checkpoints
 import com.frostr.igloo.debug.NIP55Errors
@@ -224,21 +223,7 @@ class NIP55ContentProvider : ContentProvider() {
 
             val args = projection ?: arrayOf()
 
-            // Audit log
-            context?.let { ctx ->
-                when (operationType) {
-                    "sign_event" -> {
-                        args.getOrNull(0)?.let { eventJson ->
-                            AuditLogger.logSignEvent(ctx, callerPackage, eventJson, trace.traceId)
-                        }
-                    }
-                    "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt" -> {
-                        args.getOrNull(1)?.let { pubkey ->
-                            AuditLogger.logCryptoOperation(ctx, callerPackage, operationType, pubkey, trace.traceId)
-                        }
-                    }
-                }
-            }
+            // Note: Audit logging moved to MainActivity executor to only log after deduplication
 
             // Create NIP55Request
             val request = createNIP55Request(requestId, operationType, args, callerPackage)

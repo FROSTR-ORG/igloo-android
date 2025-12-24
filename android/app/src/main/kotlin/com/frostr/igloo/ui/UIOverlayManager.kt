@@ -2,6 +2,8 @@ package com.frostr.igloo.ui
 
 import android.app.Activity
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -119,8 +121,11 @@ class UIOverlayManager(private val activity: Activity) {
 
         debugButton = ImageButton(activity).apply {
             setBackgroundResource(R.drawable.debug_button_background)
-            setPadding(16, 16, 16, 16)
-            contentDescription = "Debug Metrics"
+            setImageResource(R.drawable.ic_bug)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setPadding(12, 12, 12, 12)
+            contentDescription = "Diagnostic Info"
             setOnClickListener {
                 activity.startActivity(Intent(activity, MetricsActivity::class.java))
             }
@@ -137,7 +142,7 @@ class UIOverlayManager(private val activity: Activity) {
         debugButton?.let { button ->
             if (button.parent == null) {
                 val density = activity.resources.displayMetrics.density
-                val buttonSize = (48 * density).toInt()
+                val buttonSize = (56 * density).toInt()
                 val margin = (16 * density).toInt()
 
                 val params = FrameLayout.LayoutParams(

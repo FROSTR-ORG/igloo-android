@@ -22,6 +22,21 @@ object NIP55Deduplicator {
     private val gson = Gson()
 
     /**
+     * Extract a tag value from an event map.
+     * Tags are in the format: [["tagName", "value"], ...]
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun extractTagValue(eventMap: Map<String, Any>, tagName: String): String? {
+        val tags = eventMap["tags"] as? List<List<Any>> ?: return null
+        for (tag in tags) {
+            if (tag.size >= 2 && tag[0] == tagName) {
+                return tag[1].toString()
+            }
+        }
+        return null
+    }
+
+    /**
      * Generate a deduplication key from a map of parameters (used by InvisibleNIP55Handler)
      *
      * @param callingApp The package name of the calling application
@@ -38,12 +53,26 @@ object NIP55Deduplicator {
         return try {
             when (operationType) {
                 "sign_event" -> {
-                    // Deduplicate by event ID
+                    // Deduplicate by event ID, with special handling for kind 22242 (relay auth)
                     val eventJson = params["event"]
                     if (eventJson != null) {
                         val eventMap = gson.fromJson<Map<String, Any>>(eventJson, Map::class.java)
-                        val eventId = eventMap["id"] as? String
-                        "$callingApp:$operationType:${eventId ?: eventJson.hashCode()}"
+                        val kind = (eventMap["kind"] as? Number)?.toInt()
+
+                        if (kind == 22242) {
+                            // Kind 22242 = NIP-42 relay auth
+                            // Deduplicate by challenge tag instead of event ID
+                            // because Amethyst sends the same challenge with different event IDs
+                            val challenge = extractTagValue(eventMap, "challenge")
+                            val relay = extractTagValue(eventMap, "relay")
+                            val key = "$callingApp:$operationType:auth:${relay ?: ""}:${challenge ?: eventJson.hashCode()}"
+                            Log.d(TAG, "Kind 22242 dedup key: $key (challenge=$challenge, relay=$relay)")
+                            key
+                        } else {
+                            // Normal events: deduplicate by event ID
+                            val eventId = eventMap["id"] as? String
+                            "$callingApp:$operationType:${eventId ?: eventJson.hashCode()}"
+                        }
                     } else {
                         "$callingApp:$operationType:$fallbackId"
                     }
@@ -100,12 +129,23 @@ object NIP55Deduplicator {
         return try {
             when (operationType) {
                 "sign_event" -> {
-                    // Deduplicate by event ID
+                    // Deduplicate by event ID, with special handling for kind 22242 (relay auth)
                     val eventJson = args.getOrNull(0)
                     if (eventJson != null) {
-                        val eventMap = gson.fromJson(eventJson, Map::class.java)
-                        val eventId = eventMap["id"]?.toString()
-                        "$callingPackage:$operationType:${eventId ?: eventJson.hashCode()}"
+                        @Suppress("UNCHECKED_CAST")
+                        val eventMap = gson.fromJson(eventJson, Map::class.java) as Map<String, Any>
+                        val kind = (eventMap["kind"] as? Number)?.toInt()
+
+                        if (kind == 22242) {
+                            // Kind 22242 = NIP-42 relay auth
+                            // Deduplicate by challenge tag instead of event ID
+                            val challenge = extractTagValue(eventMap, "challenge")
+                            val relay = extractTagValue(eventMap, "relay")
+                            "$callingPackage:$operationType:auth:${relay ?: ""}:${challenge ?: eventJson.hashCode()}"
+                        } else {
+                            val eventId = eventMap["id"]?.toString()
+                            "$callingPackage:$operationType:${eventId ?: eventJson.hashCode()}"
+                        }
                     } else {
                         "$callingPackage:$operationType:${System.currentTimeMillis()}"
                     }

@@ -159,6 +159,55 @@ object AuditLogger {
     }
 
     /**
+     * Read audit log entries (most recent first).
+     *
+     * @param context Application context
+     * @param limit Maximum number of entries to return
+     * @return List of audit entries as JSONObjects, newest first
+     */
+    fun readAuditEntries(context: Context, limit: Int = 100): List<JSONObject> {
+        val entries = mutableListOf<JSONObject>()
+        try {
+            val auditFile = File(context.getExternalFilesDir(null), "$AUDIT_DIR/$AUDIT_FILE")
+            if (!auditFile.exists()) {
+                return entries
+            }
+
+            // Read all lines and parse as JSON
+            val lines = auditFile.readLines()
+            for (line in lines.reversed()) {
+                if (line.isBlank()) continue
+                try {
+                    entries.add(JSONObject(line))
+                    if (entries.size >= limit) break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse audit entry: $line")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read audit log", e)
+        }
+        return entries
+    }
+
+    /**
+     * Get the count of audit log entries.
+     */
+    fun getAuditEntryCount(context: Context): Int {
+        return try {
+            val auditFile = File(context.getExternalFilesDir(null), "$AUDIT_DIR/$AUDIT_FILE")
+            if (auditFile.exists()) {
+                auditFile.readLines().count { it.isNotBlank() }
+            } else {
+                0
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to count audit entries", e)
+            0
+        }
+    }
+
+    /**
      * Clear the audit log.
      */
     fun clearAuditLog(context: Context): Boolean {

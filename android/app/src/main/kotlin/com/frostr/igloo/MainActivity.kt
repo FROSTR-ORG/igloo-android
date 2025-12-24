@@ -17,6 +17,7 @@ import com.frostr.igloo.bridges.BridgeSet
 import com.frostr.igloo.bridges.NodeStateBridge
 import com.frostr.igloo.health.IglooHealthManager
 import com.frostr.igloo.debug.NIP55DebugLogger
+import com.frostr.igloo.util.AuditLogger
 import com.frostr.igloo.di.AppContainer
 import com.frostr.igloo.ui.UIOverlayManager
 import com.frostr.igloo.webview.WebViewManager
@@ -283,7 +284,6 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
                     isColdStart = intent.getBooleanExtra("cold_start", false)
                     Log.d(TAG, "Background signing startup - type=$signingType, app=$callingApp, coldStart=$isColdStart")
                     NIP55DebugLogger.logPWABridge("BACKGROUND_SIGNING_STARTUP", "initializePWA")
-                    // Overlay will be setup after initializeSecureWebView()
                 } else {
                     NIP55DebugLogger.logPWABridge("NORMAL_STARTUP", "initializePWA")
                     isNormalLaunch = true  // Mark as normal user launch for welcome dialog
@@ -291,6 +291,14 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
                     // checkBatteryOptimization()
                 }
                 initializeSecureWebView()
+
+                // Show signing overlay for background signing requests (cold start)
+                if (isBackgroundSigningRequest && ::overlayManager.isInitialized) {
+                    Log.d(TAG, "Cold start background signing - showing signing overlay")
+                    overlayManager.setupSigningOverlay()
+                    overlayManager.showSigningOverlay()
+                }
+
                 loadSecurePWA()
                 handleIntent(intent)
             }
@@ -1093,6 +1101,32 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
 
                 return try {
                     Log.d(TAG, "IglooHealthManager executing request: ${request.type} (${request.id})")
+
+                    // Audit log only requests that make it to AsyncBridge (after deduplication)
+                    when (request.type) {
+                        "sign_event" -> {
+                            request.params["event"]?.let { eventJson ->
+                                AuditLogger.logSignEvent(
+                                    this@MainActivity,
+                                    request.callingApp,
+                                    eventJson,
+                                    request.id
+                                )
+                            }
+                        }
+                        "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt" -> {
+                            request.params["pubkey"]?.let { pubkey ->
+                                AuditLogger.logCryptoOperation(
+                                    this@MainActivity,
+                                    request.callingApp,
+                                    request.type,
+                                    pubkey,
+                                    request.id
+                                )
+                            }
+                        }
+                    }
+
                     asyncBridge.callNip55Async(
                         request.type,
                         request.id,
@@ -1172,6 +1206,9 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
 
         setIntent(intent)
 
+        // Mark that we received a fresh NIP-55 intent (checked in onResume)
+        receivedFreshNIP55Intent = true
+
         // Check if this is a background service request
         val isBackgroundServiceRequest = intent.getBooleanExtra("background_service_request", false)
         if (isBackgroundServiceRequest) {
@@ -1179,12 +1216,29 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
         }
 
         // Handle nip55_wakeup intent - try to process ONE request from queue
+        // Only process if signing is ready (executor set up), otherwise onSecurePWAReady will handle it
         if (intent.getBooleanExtra("nip55_wakeup", false)) {
-            Log.d(TAG, "nip55_wakeup intent received in onNewIntent - trying to process queue")
-            IglooHealthManager.tryProcessOneFromQueue {
-                // Callback invoked when bootstrap signing completes (or queue empty)
-                Log.d(TAG, "Bootstrap complete (onNewIntent) - moving to background")
-                moveTaskToBack(true)
+            // Show signing overlay for background signing requests
+            val isBackgroundSigningRequest = intent.getBooleanExtra("background_signing_request", false)
+            if (isBackgroundSigningRequest && ::overlayManager.isInitialized) {
+                val signingType = intent.getStringExtra("signing_request_type") ?: "unknown"
+                val callingApp = intent.getStringExtra("signing_calling_app") ?: "unknown"
+                Log.d(TAG, "nip55_wakeup with background signing - showing overlay (type=$signingType, app=$callingApp)")
+                overlayManager.setupSigningOverlay()
+                overlayManager.showSigningOverlay()
+            }
+
+            if (isSigningReady) {
+                Log.d(TAG, "nip55_wakeup intent received in onNewIntent - processing queue (signing ready)")
+                IglooHealthManager.tryProcessOneFromQueue {
+                    // Callback invoked when bootstrap signing completes (or queue empty)
+                    Log.d(TAG, "Bootstrap complete (onNewIntent) - moving to background")
+                    moveTaskToBack(true)
+                }
+            } else {
+                Log.d(TAG, "nip55_wakeup intent received but signing not ready - will process in onSecurePWAReady")
+                // Don't return early - let the activity continue loading
+                // Queue will be processed when onSecurePWAReady() is called
             }
             return
         }
@@ -1268,6 +1322,9 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
         bridges?.qrScannerBridge?.handleActivityResult(requestCode, resultCode, data)
     }
 
+    // Flag to track if we just received a fresh NIP-55 intent (set in onNewIntent, cleared in onResume)
+    private var receivedFreshNIP55Intent = false
+
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "=== SECURE ACTIVITY LIFECYCLE: onResume ===")
@@ -1277,20 +1334,28 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
             IglooHealthManager.resetHealthTimeout()
         }
 
-        // Detect if this is a manual user switch (not a NIP-55 intent)
-        // If the intent doesn't have NIP-55 action markers, user manually switched to Igloo
-        val isNIP55Intent = intent?.action?.contains("NIP55") == true ||
-                            intent?.action?.contains("PERMISSION_DIALOG") == true ||
-                            intent?.getBooleanExtra("background_signing_request", false) == true ||
-                            intent?.getBooleanExtra("background_service_request", false) == true ||
-                            intent?.getBooleanExtra("nip55_wakeup", false) == true
+        // Check if there are pending signing requests
+        val hasPendingRequests = IglooHealthManager.hasPendingRequests()
 
-        if (!isNIP55Intent) {
-            // User manually switched to Igloo - set the active flag
+        // Determine if this is a fresh NIP-55 flow or manual user switch
+        // receivedFreshNIP55Intent is set in onNewIntent and cleared here
+        val isFreshNIP55Flow = receivedFreshNIP55Intent
+        receivedFreshNIP55Intent = false  // Clear for next onResume
+
+        if (!isFreshNIP55Flow && !hasPendingRequests) {
+            // User manually switched to Igloo and no signing in progress
+            // Hide signing overlay and show normal PWA interface
             setUserActive(true)
-            Log.d(TAG, "User manually brought Igloo to foreground")
+            Log.d(TAG, "User manually brought Igloo to foreground (no pending requests) - hiding signing overlay")
+            if (::overlayManager.isInitialized) {
+                overlayManager.hideSigningOverlay()
+            }
+            // Clear any stale NIP-55 intent extras
+            intent?.removeExtra("nip55_wakeup")
+            intent?.removeExtra("background_signing_request")
+            intent?.removeExtra("fresh_nip55_request")
         } else {
-            Log.d(TAG, "Resumed via NIP-55 intent, not setting user active")
+            Log.d(TAG, "Resumed during NIP-55 flow (fresh=$isFreshNIP55Flow) or with pending requests ($hasPendingRequests) - keeping overlay")
         }
 
         // Dismiss any open keyboard immediately when coming to foreground

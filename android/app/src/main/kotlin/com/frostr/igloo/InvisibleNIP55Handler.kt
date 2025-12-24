@@ -4,11 +4,13 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import com.frostr.igloo.bridges.StorageBridge
@@ -92,6 +94,15 @@ class InvisibleNIP55Handler : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Disable all activity animations to prevent visual glitches
+        overridePendingTransition(0, 0)
+
+        // Make window truly invisible - no background, no dim
+        window.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
+
         // Register this instance for tracking
         instanceId = registerInstance()
 
@@ -140,8 +151,7 @@ class InvisibleNIP55Handler : Activity() {
             // Record metrics
             NIP55Metrics.recordRequest(originalRequest.type, "INTENT", originalRequest.callingApp)
 
-            // Audit log the request
-            auditLogRequest(originalRequest)
+            // Note: Audit logging moved to submitToHealthManager to only log non-deduplicated requests
 
             // Special handling for get_public_key with bulk permissions
             if (originalRequest.type == "get_public_key" && originalRequest.params.containsKey("permissions")) {
@@ -229,6 +239,26 @@ class InvisibleNIP55Handler : Activity() {
     }
 
     /**
+     * Launch MainActivity to wake up WebView.
+     * Used when health is stale and we need to re-establish the WebView.
+     */
+    private fun launchMainActivityForWakeup() {
+        Log.d(TAG, "Launching MainActivity for wakeup")
+
+        val wakeupIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra("nip55_wakeup", true)
+            putExtra("background_signing_request", true)
+            putExtra("fresh_nip55_request", true)  // Marker for onResume to detect fresh vs stale
+            putExtra("signing_request_type", originalRequest.type)
+            putExtra("signing_calling_app", originalRequest.callingApp)
+        }
+        startActivity(wakeupIntent)
+    }
+
+    /**
      * Submit request to IglooHealthManager.
      */
     private fun submitToHealthManager() {
@@ -256,24 +286,6 @@ class InvisibleNIP55Handler : Activity() {
             Log.e(TAG, "Request rejected by health manager")
             // Callback already invoked with error, cleanup will happen in return methods
         }
-    }
-
-    /**
-     * Launch MainActivity to wake up WebView.
-     * Used when health is stale and we need to re-establish the WebView.
-     */
-    private fun launchMainActivityForWakeup() {
-        Log.d(TAG, "Launching MainActivity for wakeup")
-
-        val wakeupIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            putExtra("nip55_wakeup", true)
-            putExtra("signing_request_type", originalRequest.type)
-            putExtra("signing_calling_app", originalRequest.callingApp)
-        }
-        startActivity(wakeupIntent)
     }
 
     /**
@@ -350,6 +362,9 @@ class InvisibleNIP55Handler : Activity() {
         } else {
             finish()
         }
+
+        // Disable exit animation
+        overridePendingTransition(0, 0)
     }
 
     /**

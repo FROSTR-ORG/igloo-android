@@ -65,11 +65,12 @@
         <activity
             android:name=".InvisibleNIP55Handler"
             android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:theme="@style/Theme.Invisible"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
             android:stateNotNeeded="true"
-            android:taskAffinity="">
+            android:taskAffinity=""
+            android:noHistory="false">
 
             <!-- Handle nostrsigner: URLs -->
             <intent-filter android:priority="1000">

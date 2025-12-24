@@ -25,27 +25,59 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:padding="16dp"
         android:background="#0d0d1a">
 
-        <Button
-            android:id="@+id/reset_button"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Reset Metrics"
-            android:textColor="#ffffff"
-            android:backgroundTint="#6B46C1" />
+            android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/copy_button"
-            android:layout_width="0dp"
+            <Button
+                android:id="@+id/reset_button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Reset Metrics"
+                android:textColor="#ffffff"
+                android:backgroundTint="#6B46C1" />
+
+            <Button
+                android:id="@+id/copy_button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Copy"
+                android:textColor="#ffffff"
+                android:backgroundTint="#4A5568" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="8dp"
-            android:text="Copy to Clipboard"
-            android:textColor="#ffffff"
-            android:backgroundTint="#4A5568" />
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <Button
+                android:id="@+id/view_audit_button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="View Audit Log"
+                android:textColor="#ffffff"
+                android:backgroundTint="#2D3748" />
+
+            <Button
+                android:id="@+id/clear_audit_button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Clear Audit Log"
+                android:textColor="#ffffff"
+                android:backgroundTint="#742A2A" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>
