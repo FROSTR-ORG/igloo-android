@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -95,7 +96,7 @@ class InvisibleNIP55Handler : Activity() {
         super.onCreate(savedInstanceState)
 
         // Disable all activity animations to prevent visual glitches
-        overridePendingTransition(0, 0)
+        disableActivityTransition()
 
         // Make window truly invisible - no background, no dim
         window.apply {
@@ -364,7 +365,20 @@ class InvisibleNIP55Handler : Activity() {
         }
 
         // Disable exit animation
-        overridePendingTransition(0, 0)
+        disableActivityTransition()
+    }
+
+    /**
+     * Disable activity transitions using version-appropriate API.
+     */
+    private fun disableActivityTransition() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
     }
 
     /**
@@ -439,7 +453,7 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("nip55_request_type", originalRequest.type)
             putExtra("nip55_request_params", gson.toJson(originalRequest.params))
             putExtra("nip55_request_calling_app", originalRequest.callingApp)
-            val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            val replyIntent = getParcelableExtraCompat(intent, "reply_pending_intent", PendingIntent::class.java)
             putExtra("reply_pending_intent", replyIntent)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -475,13 +489,29 @@ class InvisibleNIP55Handler : Activity() {
             putExtra("nip55_request_type", originalRequest.type)
             putExtra("nip55_request_params", gson.toJson(originalRequest.params))
             putExtra("nip55_request_calling_app", originalRequest.callingApp)
-            val replyIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            val replyIntent = getParcelableExtraCompat(intent, "reply_pending_intent", PendingIntent::class.java)
             putExtra("reply_pending_intent", replyIntent)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         registerPermissionCallback()
         startActivity(dialogIntent)
+    }
+
+    /**
+     * Type-safe getParcelableExtra that works across API levels.
+     */
+    private fun <T : android.os.Parcelable> getParcelableExtraCompat(
+        intent: Intent,
+        key: String,
+        clazz: Class<T>
+    ): T? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(key, clazz)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(key)
+        }
     }
 
     /**

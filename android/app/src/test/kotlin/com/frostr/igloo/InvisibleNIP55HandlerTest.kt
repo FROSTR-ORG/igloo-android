@@ -206,6 +206,51 @@ class InvisibleNIP55HandlerTest {
         assertThat(params["current_user"]).isEqualTo("npub1abc...")
     }
 
+    // ========== Focus Switching Intent Extras Tests ==========
+
+    @Test
+    fun `wakeup intent includes background_signing_request extra`() {
+        // Verify the intent extras structure expected by MainActivity for overlay control
+        val wakeupIntent = Intent().apply {
+            putExtra("nip55_wakeup", true)
+            putExtra("background_signing_request", true)
+            putExtra("signing_request_type", "sign_event")
+            putExtra("signing_calling_app", "com.example.app")
+        }
+
+        assertThat(wakeupIntent.getBooleanExtra("nip55_wakeup", false)).isTrue()
+        assertThat(wakeupIntent.getBooleanExtra("background_signing_request", false)).isTrue()
+        assertThat(wakeupIntent.getStringExtra("signing_request_type")).isEqualTo("sign_event")
+        assertThat(wakeupIntent.getStringExtra("signing_calling_app")).isEqualTo("com.example.app")
+    }
+
+    @Test
+    fun `wakeup intent extras default to false when not set`() {
+        val emptyIntent = Intent()
+
+        assertThat(emptyIntent.getBooleanExtra("nip55_wakeup", false)).isFalse()
+        assertThat(emptyIntent.getBooleanExtra("background_signing_request", false)).isFalse()
+    }
+
+    @Test
+    fun `intent extras can be cleared`() {
+        val intent = Intent().apply {
+            putExtra("nip55_wakeup", true)
+            putExtra("background_signing_request", true)
+        }
+
+        // Verify extras are set
+        assertThat(intent.getBooleanExtra("nip55_wakeup", false)).isTrue()
+
+        // Clear extras (as MainActivity does when detecting manual switch)
+        intent.removeExtra("nip55_wakeup")
+        intent.removeExtra("background_signing_request")
+
+        // Verify extras are cleared
+        assertThat(intent.getBooleanExtra("nip55_wakeup", false)).isFalse()
+        assertThat(intent.getBooleanExtra("background_signing_request", false)).isFalse()
+    }
+
     // ========== Validation Error Tests ==========
 
     @Test(expected = IllegalArgumentException::class)

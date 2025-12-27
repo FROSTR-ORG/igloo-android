@@ -69,6 +69,93 @@ class NIP55DeduplicatorTest {
         assertThat(key).isEqualTo("com.example.app:sign_event:fallback123")
     }
 
+    // === Kind 22242 (NIP-42 relay auth) tests ===
+
+    @Test
+    fun `kind 22242 deduplicates by challenge tag instead of event id`() {
+        // NIP-42 relay auth events should deduplicate by challenge, not event ID
+        // because Amethyst sends the same challenge with different event IDs on retry
+        val eventJson = """{"id":"unique-id-1","kind":22242,"tags":[["relay","wss://relay.example.com"],["challenge","abc123challenge"]]}"""
+        val params = mapOf("event" to eventJson)
+        val key = NIP55Deduplicator.getDeduplicationKey(
+            callingApp = "com.example.app",
+            operationType = "sign_event",
+            params = params,
+            fallbackId = "fallback"
+        )
+        // Should include auth prefix, relay, and challenge - NOT the event id
+        assertThat(key).contains(":auth:")
+        assertThat(key).contains("wss://relay.example.com")
+        assertThat(key).contains("abc123challenge")
+        assertThat(key).doesNotContain("unique-id-1")
+    }
+
+    @Test
+    fun `kind 22242 same challenge produces same key with different event ids`() {
+        // Amethyst sends same challenge with different event IDs on retry
+        val eventJson1 = """{"id":"id-attempt-1","kind":22242,"tags":[["relay","wss://relay.example.com"],["challenge","same_challenge"]]}"""
+        val eventJson2 = """{"id":"id-attempt-2","kind":22242,"tags":[["relay","wss://relay.example.com"],["challenge","same_challenge"]]}"""
+
+        val key1 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson1), "f1")
+        val key2 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson2), "f2")
+
+        // Same challenge = same dedup key (even with different event IDs)
+        assertThat(key1).isEqualTo(key2)
+    }
+
+    @Test
+    fun `kind 22242 different challenges produce different keys`() {
+        val eventJson1 = """{"id":"id1","kind":22242,"tags":[["relay","wss://relay.example.com"],["challenge","challenge_A"]]}"""
+        val eventJson2 = """{"id":"id2","kind":22242,"tags":[["relay","wss://relay.example.com"],["challenge","challenge_B"]]}"""
+
+        val key1 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson1), "f1")
+        val key2 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson2), "f2")
+
+        assertThat(key1).isNotEqualTo(key2)
+    }
+
+    @Test
+    fun `kind 22242 different relays produce different keys`() {
+        val eventJson1 = """{"id":"id1","kind":22242,"tags":[["relay","wss://relay1.example.com"],["challenge","same_challenge"]]}"""
+        val eventJson2 = """{"id":"id2","kind":22242,"tags":[["relay","wss://relay2.example.com"],["challenge","same_challenge"]]}"""
+
+        val key1 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson1), "f1")
+        val key2 = NIP55Deduplicator.getDeduplicationKey("app", "sign_event", mapOf("event" to eventJson2), "f2")
+
+        // Different relays = different auth contexts
+        assertThat(key1).isNotEqualTo(key2)
+    }
+
+    @Test
+    fun `kind 22242 without challenge tag falls back to hash`() {
+        // Edge case: kind 22242 without challenge tag
+        val eventJson = """{"id":"abc123","kind":22242,"tags":[["relay","wss://relay.example.com"]]}"""
+        val params = mapOf("event" to eventJson)
+        val key = NIP55Deduplicator.getDeduplicationKey(
+            callingApp = "com.example.app",
+            operationType = "sign_event",
+            params = params,
+            fallbackId = "fallback"
+        )
+        // Should still include auth prefix and relay, but use hash for challenge
+        assertThat(key).contains(":auth:")
+        assertThat(key).contains("wss://relay.example.com")
+    }
+
+    @Test
+    fun `array overload kind 22242 deduplicates by challenge`() {
+        val eventJson = """{"id":"unique-id","kind":22242,"tags":[["relay","wss://test.relay"],["challenge","test_challenge_123"]]}"""
+        val args = arrayOf(eventJson)
+        val key = NIP55Deduplicator.getDeduplicationKey(
+            callingPackage = "com.example.app",
+            operationType = "sign_event",
+            args = args
+        )
+        assertThat(key).contains(":auth:")
+        assertThat(key).contains("test_challenge_123")
+        assertThat(key).doesNotContain("unique-id")
+    }
+
     // === Encryption tests ===
 
     @Test

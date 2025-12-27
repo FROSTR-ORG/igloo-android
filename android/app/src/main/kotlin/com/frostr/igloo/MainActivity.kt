@@ -315,7 +315,7 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
         Log.d(TAG, "=== HANDLING NIP-55 REQUEST (AsyncBridge) ===")
 
         try {
-            val replyPendingIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            val replyPendingIntent = getParcelableExtraCompat(intent, "reply_pending_intent", PendingIntent::class.java)
             Log.d(TAG, "Processing traditional NIP-55 request")
             handleTraditionalNIP55Request(replyPendingIntent)
 
@@ -323,11 +323,27 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
             Log.e(TAG, "Critical error in NIP-55 request handling", e)
             NIP55DebugLogger.logError("CRITICAL_HANDLE", e)
 
-            val replyPendingIntent = intent.getParcelableExtra<PendingIntent>("reply_pending_intent")
+            val replyPendingIntent = getParcelableExtraCompat(intent, "reply_pending_intent", PendingIntent::class.java)
             sendReply(replyPendingIntent, RESULT_CANCELED, Intent().apply {
                 putExtra("error", "Critical error: ${e.message}")
                 putExtra("result_code", RESULT_CANCELED)
             })
+        }
+    }
+
+    /**
+     * Type-safe getParcelableExtra that works across API levels.
+     */
+    private fun <T : android.os.Parcelable> getParcelableExtraCompat(
+        intent: Intent,
+        key: String,
+        clazz: Class<T>
+    ): T? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(key, clazz)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(key)
         }
     }
 
@@ -671,10 +687,7 @@ class MainActivity : AppCompatActivity(), WebViewManager.WebViewReadyListener {
                 imm.hideSoftInputFromWindow(view.windowToken, 0)
             }
 
-            // Strategy 3: Toggle soft input off (more aggressive)
-            imm.toggleSoftInput(InputMethodManager.HIDE_IMPLICIT_ONLY, 0)
-
-            // Strategy 4: Delayed dismissal in case window isn't ready yet
+            // Strategy 3: Delayed dismissal in case window isn't ready yet
             window.decorView.postDelayed({
                 try {
                     currentFocus?.let { view ->

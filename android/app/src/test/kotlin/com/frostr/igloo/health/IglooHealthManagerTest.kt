@@ -269,6 +269,69 @@ class IglooHealthManagerTest {
         assertThat(stats["pendingQueue"]).isEqualTo(1)
     }
 
+    // ========== hasPendingRequests Tests ==========
+
+    @Test
+    fun `hasPendingRequests returns false when no requests`() {
+        assertThat(IglooHealthManager.hasPendingRequests()).isFalse()
+    }
+
+    @Test
+    fun `hasPendingRequests returns true when requests are queued`() {
+        // Queue request while unhealthy
+        val request = createTestRequest("test-1", "get_public_key")
+        IglooHealthManager.submit(request) { }
+
+        assertThat(IglooHealthManager.hasPendingRequests()).isTrue()
+    }
+
+    @Test
+    fun `hasPendingRequests returns true when requests are in-flight`() {
+        IglooHealthManager.markHealthy()
+
+        // Setup an executor that blocks to keep request in-flight
+        val executionStarted = CountDownLatch(1)
+        val executionBlocker = CountDownLatch(1)
+
+        IglooHealthManager.requestExecutor = object : IglooHealthManager.RequestExecutor {
+            override suspend fun execute(request: NIP55Request): NIP55Result {
+                executionStarted.countDown()
+                executionBlocker.await(5, TimeUnit.SECONDS)
+                return NIP55Result(ok = true, type = request.type, id = request.id, result = "result")
+            }
+        }
+
+        val request = createTestRequest("test-1", "sign_event")
+        IglooHealthManager.submit(request) { }
+
+        // Process to start execution
+        org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        // Should have in-flight request
+        assertThat(IglooHealthManager.hasPendingRequests()).isTrue()
+
+        // Unblock to clean up
+        executionBlocker.countDown()
+    }
+
+    @Test
+    fun `hasPendingRequests returns false after requests complete`() {
+        IglooHealthManager.markHealthy()
+        setupMockExecutor()
+
+        val request = createTestRequest("test-1", "get_public_key")
+        val latch = CountDownLatch(1)
+        IglooHealthManager.submit(request) { latch.countDown() }
+
+        // Process initial tasks to start execution
+        org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+        latch.await(1, TimeUnit.SECONDS)
+        // Process remaining cleanup tasks
+        org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+        assertThat(IglooHealthManager.hasPendingRequests()).isFalse()
+    }
+
     // ========== Reset Tests ==========
 
     @Test
