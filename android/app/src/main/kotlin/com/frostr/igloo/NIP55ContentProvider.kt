@@ -40,7 +40,7 @@ class NIP55ContentProvider : ContentProvider() {
 
     companion object {
         private const val TAG = "NIP55ContentProvider"
-        private const val TIMEOUT_MS = 30000L
+        private const val TIMEOUT_MS = 15000L  // 15 seconds - balance between fast failure and giving bifrost time
         private const val WAKE_LOCK_TAG = "igloo:content_provider_signing"
 
         // Authority patterns for NIP-55 operations
@@ -171,10 +171,11 @@ class NIP55ContentProvider : ContentProvider() {
         sortOrder: String?
     ): Cursor? {
         // HEALTH CHECK: If system is unhealthy, return null for Intent fallback
-        // We can't start MainActivity from ContentProvider (background activity start blocked)
-        // so we let Amethyst's Intent fallback handle waking up the app
+        // The Intent flow focus-switches to Igloo which properly re-establishes
+        // any zombie WebSocket connections (Android can kill connections invisibly
+        // while they still appear OPEN to OkHttp)
         if (!IglooHealthManager.isHealthy) {
-            Log.d(TAG, "System unhealthy - returning null to trigger Intent fallback")
+            Log.d(TAG, "System unhealthy - returning null to trigger Intent fallback (will focus-switch to reconnect)")
             return null
         }
 
@@ -294,14 +295,18 @@ class NIP55ContentProvider : ContentProvider() {
                 NIP55Metrics.recordFailure(result.reason ?: "Unknown error")
             }
 
-            // If node is locked, offline, or needs permission, return null for Intent fallback
+            // If node is locked, offline, timed out, or needs permission, return null for Intent fallback
+            // Timeout is critical: it means bifrost didn't respond, likely due to zombie WebSocket
+            // The Intent fallback will focus-switch to Igloo and re-establish the connection
             if (!result.ok) {
                 val reason = result.reason ?: "Operation failed"
                 if (reason.contains("locked", ignoreCase = true) ||
                     reason.contains("not ready", ignoreCase = true) ||
                     reason.contains("offline", ignoreCase = true) ||
-                    reason.contains("permission", ignoreCase = true)) {
-                    Log.d(TAG, "Needs Intent fallback: $reason")
+                    reason.contains("permission", ignoreCase = true) ||
+                    reason.contains("timeout", ignoreCase = true) ||
+                    reason.contains("timed out", ignoreCase = true)) {
+                    Log.d(TAG, "Needs Intent fallback (will focus-switch): $reason")
                     return null  // Intent flow will handle unlock/reconnect/permission dialog
                 }
                 // For permanent errors, return rejected cursor

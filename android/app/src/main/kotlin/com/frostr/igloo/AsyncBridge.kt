@@ -30,7 +30,7 @@ class AsyncBridge(private val webView: WebView) {
     companion object {
         private const val TAG = "AsyncBridge"
         private const val BRIDGE_NAME = "androidBridge"
-        private const val DEFAULT_TIMEOUT_MS = 30000L // 30 seconds
+        private const val DEFAULT_TIMEOUT_MS = 15000L // 15 seconds - balance between fast failure and giving bifrost time
     }
 
     // Thread-safe map to track pending requests

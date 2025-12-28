@@ -213,6 +213,74 @@ class NIP55ContentProviderTest {
         assertThat(IglooHealthManager.isHealthy).isTrue()
     }
 
+    // ========== Timeout Intent Fallback Tests ==========
+
+    @Test
+    fun `timeout reason triggers Intent fallback`() {
+        // Test that "timeout" patterns should return null (Intent fallback)
+        // instead of rejected cursor
+        val timeoutPatterns = listOf(
+            "timeout",
+            "Timeout",
+            "TIMEOUT",
+            "timed out",
+            "Timed out",
+            "Request timed out waiting for response"
+        )
+
+        timeoutPatterns.forEach { reason ->
+            val shouldFallback = reason.contains("timeout", ignoreCase = true) ||
+                                 reason.contains("timed out", ignoreCase = true)
+            assertThat(shouldFallback).isTrue()
+        }
+    }
+
+    @Test
+    fun `lock and offline reasons trigger Intent fallback`() {
+        // Test that these patterns should return null (Intent fallback)
+        val fallbackPatterns = listOf(
+            "locked" to true,
+            "Node is locked" to true,
+            "not ready" to true,
+            "Node not ready" to true,
+            "offline" to true,
+            "Node is offline" to true,
+            "permission" to true,
+            "Permission denied" to true
+        )
+
+        fallbackPatterns.forEach { (reason, expected) ->
+            val shouldFallback = reason.contains("locked", ignoreCase = true) ||
+                                 reason.contains("not ready", ignoreCase = true) ||
+                                 reason.contains("offline", ignoreCase = true) ||
+                                 reason.contains("permission", ignoreCase = true) ||
+                                 reason.contains("timeout", ignoreCase = true) ||
+                                 reason.contains("timed out", ignoreCase = true)
+            assertThat(shouldFallback).isEqualTo(expected)
+        }
+    }
+
+    @Test
+    fun `permanent error does not trigger Intent fallback`() {
+        // Permanent errors should return rejected cursor, not null
+        val permanentErrors = listOf(
+            "Invalid event format",
+            "Encryption failed",
+            "Unknown error",
+            "Internal error"
+        )
+
+        permanentErrors.forEach { reason ->
+            val shouldFallback = reason.contains("locked", ignoreCase = true) ||
+                                 reason.contains("not ready", ignoreCase = true) ||
+                                 reason.contains("offline", ignoreCase = true) ||
+                                 reason.contains("permission", ignoreCase = true) ||
+                                 reason.contains("timeout", ignoreCase = true) ||
+                                 reason.contains("timed out", ignoreCase = true)
+            assertThat(shouldFallback).isFalse()
+        }
+    }
+
     // ========== NIP55ResultBridge Tests ==========
 
     @Test

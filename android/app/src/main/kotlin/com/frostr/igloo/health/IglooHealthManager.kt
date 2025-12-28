@@ -65,6 +65,46 @@ object IglooHealthManager {
         private set
 
     /**
+     * Timestamp of last signing failure (timeout).
+     * Used to prevent smart health check from resetting health when signing is broken.
+     */
+    @Volatile
+    private var lastSigningFailureTime: Long = 0L
+
+    /**
+     * Window during which signing failures prevent smart health reset.
+     * If a signing timeout occurred within this window, don't trust the smart check.
+     * Keep this short - once signing succeeds, clearSigningFailures() resets this anyway.
+     */
+    private const val SIGNING_FAILURE_WINDOW_MS = 10_000L  // 10 seconds
+
+    /**
+     * Check if signing has been failing recently.
+     * Used by NIP55ContentProvider to avoid resetting health when bifrost is broken.
+     */
+    @JvmStatic
+    fun hasRecentSigningFailures(): Boolean {
+        val age = System.currentTimeMillis() - lastSigningFailureTime
+        return age < SIGNING_FAILURE_WINDOW_MS
+    }
+
+    /**
+     * Record a signing failure (timeout).
+     * Called when bifrost signing times out.
+     */
+    fun recordSigningFailure() {
+        lastSigningFailureTime = System.currentTimeMillis()
+        Log.d(TAG, "Recorded signing failure at $lastSigningFailureTime")
+    }
+
+    /**
+     * Clear signing failure tracking (called on successful signing).
+     */
+    fun clearSigningFailures() {
+        lastSigningFailureTime = 0L
+    }
+
+    /**
      * The currently active Intent handler (if any).
      * Only one handler should be active at a time - others queue and finish.
      */
@@ -690,15 +730,30 @@ object IglooHealthManager {
 
                 // Mark healthy and reset timeout on success
                 if (result.ok) {
+                    clearSigningFailures()  // Clear failure tracking
                     markHealthy()  // This also schedules the timeout
                     NIP55Metrics.recordSuccess(duration)
                 } else {
+                    // Record signing failure if it was a timeout
+                    val reason = result.reason ?: ""
+                    if (reason.contains("timeout", ignoreCase = true) ||
+                        reason.contains("timed out", ignoreCase = true)) {
+                        recordSigningFailure()
+                    }
                     NIP55Metrics.recordFailure(result.reason ?: "unknown")
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error executing request", e)
                 NIP55TraceContext.logError(traceId, "HEALTH_EXECUTE", e.message ?: "Unknown error")
+
+                // Record signing failure for timeout exceptions
+                val errorMessage = e.message ?: ""
+                if (errorMessage.contains("timeout", ignoreCase = true) ||
+                    errorMessage.contains("timed out", ignoreCase = true) ||
+                    e is kotlinx.coroutines.TimeoutCancellationException) {
+                    recordSigningFailure()
+                }
 
                 val errorResult = NIP55Result(
                     ok = false,
@@ -779,11 +834,13 @@ object IglooHealthManager {
     }
 
     private fun cacheResult(dedupeKey: String, result: NIP55Result) {
-        // Don't cache transient errors
+        // Don't cache transient errors - these should be retried
         if (!result.ok && result.reason?.let { reason ->
             reason.contains("locked", ignoreCase = true) ||
             reason.contains("not ready", ignoreCase = true) ||
-            reason.contains("offline", ignoreCase = true)
+            reason.contains("offline", ignoreCase = true) ||
+            reason.contains("timeout", ignoreCase = true) ||
+            reason.contains("timed out", ignoreCase = true)
         } == true) {
             Log.d(TAG, "Not caching transient error: ${result.reason}")
             return
@@ -869,6 +926,7 @@ object IglooHealthManager {
         isHealthy = false
         activeHandler = null
         wakeupSent = false
+        lastSigningFailureTime = 0L  // Clear signing failure tracking
 
         cancelHealthTimeout()
 

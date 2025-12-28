@@ -71,9 +71,16 @@ class InvisibleNIP55Handler : Activity() {
         }
 
         @Synchronized
-        private fun unregisterInstance(id: Int) {
+        private fun unregisterInstance(id: Int, context: Context) {
             activeInstances.remove(id)
             Log.d(TAG, "<<< HANDLER DESTROYED: instance #$id (remaining: ${activeInstances.size})")
+
+            // Safety: stop service when no handlers remain
+            // This catches cases where the active handler was killed without proper cleanup
+            if (activeInstances.isEmpty() && NIP55HandlerService.isRunning) {
+                Log.d(TAG, "No handlers remaining - stopping orphaned service")
+                NIP55HandlerService.stop(context)
+            }
         }
     }
 
@@ -175,6 +182,8 @@ class InvisibleNIP55Handler : Activity() {
                 }
                 "allowed" -> {
                     // Permission granted - submit via health-based routing
+                    // If unhealthy, this will focus-switch to Igloo which properly
+                    // re-establishes any zombie WebSocket connections
                     Log.d(TAG, "Permission allowed - submitting via health manager")
                     submitViaHealthManager()
                 }
@@ -425,7 +434,7 @@ class InvisibleNIP55Handler : Activity() {
     }
 
     override fun onDestroy() {
-        unregisterInstance(instanceId)
+        unregisterInstance(instanceId, applicationContext)
         cleanup()
         super.onDestroy()
     }

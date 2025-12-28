@@ -25,7 +25,7 @@ class UnifiedSigningService(
     companion object {
         private const val TAG = "UnifiedSigningService"
         private const val MAX_CONCURRENT_REQUESTS = 10
-        private const val REQUEST_TIMEOUT_MS = 30000L // 30 seconds
+        private const val REQUEST_TIMEOUT_MS = 15000L // 15 seconds - balance between fast failure and giving bifrost time
     }
 
     private val gson = Gson()
